@@ -15,3 +15,7 @@
 - 快捷键控制：
   - **Ctrl+Shift+Alt+P**：开始/暂停键盘录制
   - **Ctrl+Shift+Alt+Q**：安全退出
+
+---
+
+**作者：Yuebi**
