@@ -304,6 +304,8 @@ std::string GetLocalIPAddress()
         return ip;
     }
 
+    std::string fallback_ip = "unknown";
+
     for (struct addrinfo* ptr = result; ptr != nullptr; ptr = ptr->ai_next)
     {
         if (ptr->ai_family == AF_INET)
@@ -312,21 +314,31 @@ std::string GetLocalIPAddress()
             sockaddr_in* sa = (sockaddr_in*)ptr->ai_addr;
             InetNtopA(AF_INET, &sa->sin_addr, ipstr, INET_ADDRSTRLEN);
             std::string candidate(ipstr);
-            if (candidate != "127.0.0.1" && !candidate.empty())
+
+            // 优先选择以 "10.88." 开头的 IP
+            if (candidate.rfind("10.88.", 0) == 0)
             {
                 ip = candidate;
                 break;
             }
-            else if (ip == "unknown")
+
+            // 如果没有找到以 "10.88." 开头的 IP，记录第一个非回环地址作为备用
+            if (candidate != "127.0.0.1" && !candidate.empty() && fallback_ip == "unknown")
             {
-                // 如果还没找到其他地址，临时使用回环地址
-                ip = candidate;
+                fallback_ip = candidate;
             }
         }
     }
 
     freeaddrinfo(result);
     WSACleanup();
+
+    // 如果没有找到以 "10.88." 开头的 IP，使用第一个非回环地址
+    if (ip == "unknown")
+    {
+        ip = fallback_ip;
+    }
+
     return ip;
 }
 
