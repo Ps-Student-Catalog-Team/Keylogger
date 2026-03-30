@@ -9,7 +9,7 @@ on:
 env:
   SOLUTION_FILE_PATH: .
   BUILD_CONFIGURATION: Release
-  # 根据你的项目实际平台修改，默认 x86-windows（对应 Win32），如需 x64 改为 x64-windows
+  # 根据项目实际平台修改：x86-windows 或 x64-windows
   VCPKG_DEFAULT_TRIPLET: x86-windows
   VCPKG_ROOT: ${{ github.workspace }}\vcpkg
 
@@ -31,7 +31,6 @@ jobs:
 
     - name: Install dependencies
       run: |
-        # 安装 curl 和 jsoncpp（如果你的项目需要 nlohmann-json，将 jsoncpp 替换为 nlohmann-json）
         .\vcpkg\vcpkg install curl jsoncpp --triplet ${{ env.VCPKG_DEFAULT_TRIPLET }}
 
     - name: Add MSBuild to PATH
@@ -44,6 +43,12 @@ jobs:
     - name: Build
       working-directory: ${{env.GITHUB_WORKSPACE}}
       run: |
-        # 根据 triplet 映射 MSBuild 平台名
-        if ("${{ env.VCPKG_DEFAULT_TRIPLET }}" -eq "x86-windows") { $platform = "Win32" } else { $platform = "x64" }
-        msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} /p:Platform=$platform ${{env.SOLUTION_FILE_PATH}}
+        # 根据 triplet 映射 MSBuild 平台
+        if ("${{ env.VCPKG_DEFAULT_TRIPLET }}" -eq "x86-windows") { $platform = "Win32" }
+        elseif ("${{ env.VCPKG_DEFAULT_TRIPLET }}" -eq "x64-windows") { $platform = "x64" }
+        else { $platform = "" }
+        if ($platform) {
+          msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} /p:Platform=$platform ${{env.SOLUTION_FILE_PATH}}
+        } else {
+          msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} ${{env.SOLUTION_FILE_PATH}}
+        }
