@@ -1,5 +1,4 @@
-#define UNICODE
-#include <winsock2.h>
+﻿#include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <iostream>
@@ -564,7 +563,7 @@ bool deleteLogFile(const std::string& dir, const std::string& fileName) {
     }
 
     std::string filePath = dir + "\\" + fileName;
-    
+
     // 检查文件是否存在
     if (!fs::exists(filePath)) {
         std::cerr << "Log file not found: " << filePath << std::endl;
@@ -581,16 +580,18 @@ bool deleteLogFile(const std::string& dir, const std::string& fileName) {
     try {
         // 先设置文件属性为正常（防止文件被标记为只读）
         SetFileAttributesA(filePath.c_str(), FILE_ATTRIBUTE_NORMAL);
-        
+
         // 删除文件
         if (fs::remove(filePath)) {
             std::cout << "Successfully deleted log file: " << fileName << std::endl;
             return true;
-        } else {
+        }
+        else {
             std::cerr << "Failed to delete log file: " << fileName << std::endl;
             return false;
         }
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e) {
         std::cerr << "Exception when deleting file: " << e.what() << std::endl;
         return false;
     }
@@ -602,7 +603,7 @@ json getLogFilesInfo(const std::string& dir) {
     result["total_count"] = 0;
     result["total_size"] = 0;
     result["files"] = json::array();
-    
+
     if (dir.empty() || !fs::exists(dir) || !fs::is_directory(dir)) {
         return result;
     }
@@ -630,7 +631,7 @@ json getLogFilesInfo(const std::string& dir) {
         });
 
     result["total_count"] = validLogs.size();
-    
+
     uintmax_t totalSize = 0;
     for (const auto& log : validLogs) {
         json fileInfo;
@@ -777,11 +778,11 @@ std::string ProcessCommand(const std::string& command)
 {
     json response;
     response["status"] = "ok";
-    
+
     try {
         json cmd = json::parse(command);
         std::string action = cmd.value("action", "");
-        
+
         if (action == "ping") {
             response["type"] = "pong";
             response["data"]["recording"] = isRecording;
@@ -850,7 +851,8 @@ std::string ProcessCommand(const std::string& command)
                 response["type"] = "log_deleted";
                 response["data"]["success"] = success;
                 response["data"]["file"] = fileName;
-            } else {
+            }
+            else {
                 response["status"] = "error";
                 response["message"] = "Missing 'file' parameter";
             }
@@ -864,7 +866,7 @@ std::string ProcessCommand(const std::string& command)
         response["status"] = "error";
         response["message"] = e.what();
     }
-    
+
     return response.dump();
 }
 
@@ -872,13 +874,13 @@ void HandleClient(SOCKET clientSocket)
 {
     char buffer[4096];
     std::string accumulated;
-    
+
     std::cout << "Client connected, socket: " << clientSocket << std::endl;
-    
+
     // 设置接收超时
     DWORD timeout = 30000; // 30秒
     setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
-    
+
     while (serverControlEnabled) {
         int received = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
         if (received == 0) {
@@ -898,16 +900,16 @@ void HandleClient(SOCKET clientSocket)
             std::cout << "Client disconnected, error code: " << error << std::endl;
             break;
         }
-        
+
         buffer[received] = '\0';
         std::cout << "Received " << received << " bytes: " << buffer << std::endl;
         accumulated += buffer;
-        
+
         size_t pos;
         while ((pos = accumulated.find('\n')) != std::string::npos) {
             std::string command = accumulated.substr(0, pos);
             accumulated = accumulated.substr(pos + 1);
-            
+
             if (!command.empty()) {
                 std::cout << "Processing command: " << command << std::endl;
                 std::string response = ProcessCommand(command);
@@ -917,13 +919,14 @@ void HandleClient(SOCKET clientSocket)
                 if (sent == SOCKET_ERROR) {
                     int sendError = WSAGetLastError();
                     std::cerr << "Failed to send response, error: " << sendError << std::endl;
-                } else {
+                }
+                else {
                     std::cout << "Sent " << sent << " bytes" << std::endl;
                 }
             }
         }
     }
-    
+
     closesocket(clientSocket);
     std::cout << "Client connection closed" << std::endl;
 }
@@ -935,26 +938,26 @@ DWORD WINAPI ServerThreadFunc(LPVOID lpParam)
         std::cerr << "WSAStartup failed" << std::endl;
         return 1;
     }
-    
+
     SOCKET listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (listenSocket == INVALID_SOCKET) {
         std::cerr << "Failed to create listen socket" << std::endl;
         WSACleanup();
         return 1;
     }
-    
+
     int reuse = 1;
     setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, (char*)&reuse, sizeof(reuse));
-    
+
     sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
     serverAddr.sin_port = htons(g_localPort);
-    
+
     if (bind(listenSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
         std::cerr << "Failed to bind port " << g_localPort << ", error: " << WSAGetLastError() << std::endl;
         std::cerr << "Trying dynamic port..." << std::endl;
-        
+
         serverAddr.sin_port = 0;
         if (bind(listenSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
             std::cerr << "Failed to bind dynamic port, error: " << WSAGetLastError() << std::endl;
@@ -963,37 +966,37 @@ DWORD WINAPI ServerThreadFunc(LPVOID lpParam)
             return 1;
         }
     }
-    
+
     sockaddr_in boundAddr;
     int addrLen = sizeof(boundAddr);
     getsockname(listenSocket, (sockaddr*)&boundAddr, &addrLen);
     g_localPort = ntohs(boundAddr.sin_port);
-    
+
     std::cout << "Server listening on port: " << g_localPort << std::endl;
-    
+
     if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR) {
         std::cerr << "Listen failed" << std::endl;
         closesocket(listenSocket);
         WSACleanup();
         return 1;
     }
-    
+
     while (serverControlEnabled && serverThreadRunning) {
         fd_set readSet;
         FD_ZERO(&readSet);
         FD_SET(listenSocket, &readSet);
-        
+
         timeval timeout;
         timeout.tv_sec = 1;
         timeout.tv_usec = 0;
-        
+
         int result = select(0, &readSet, NULL, NULL, &timeout);
         if (result == SOCKET_ERROR) {
             std::cerr << "select() failed, error: " << WSAGetLastError() << std::endl;
             Sleep(1000);
             continue;
         }
-        
+
         if (result > 0 && FD_ISSET(listenSocket, &readSet)) {
             sockaddr_in clientAddr;
             int clientAddrLen = sizeof(clientAddr);
@@ -1002,15 +1005,16 @@ DWORD WINAPI ServerThreadFunc(LPVOID lpParam)
                 char clientIp[INET_ADDRSTRLEN];
                 InetNtopA(AF_INET, &clientAddr.sin_addr, clientIp, INET_ADDRSTRLEN);
                 std::cout << "New connection from: " << clientIp << ":" << ntohs(clientAddr.sin_port) << std::endl;
-                
+
                 std::thread clientThread(HandleClient, clientSocket);
                 clientThread.detach();
-            } else {
+            }
+            else {
                 std::cerr << "accept() failed, error: " << WSAGetLastError() << std::endl;
             }
         }
     }
-    
+
     closesocket(listenSocket);
     WSACleanup();
     serverThreadRunning = false;
@@ -1049,7 +1053,7 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                 isRecording = !isRecording;
                 // 保存录制状态到注册表
                 SaveRecordingState(isRecording);
-                
+
                 if (isRecording)
                 {
                     std::cout << "Recording resumed\n";
@@ -1207,19 +1211,19 @@ void HandleSelfCopyAndDelete()
         // 从命令行获取要删除的旧程序路径
         std::wstring cmdLine = GetCommandLineW();
         std::wcout << L"Command line: " << cmdLine << std::endl;
-        
+
         int argc;
         LPWSTR* argv = CommandLineToArgvW(cmdLine.c_str(), &argc);
-        
+
         std::wcout << L"Argument count: " << argc << std::endl;
         for (int i = 0; i < argc; i++) {
             std::wcout << L"argv[" << i << L"]: " << argv[i] << std::endl;
         }
-        
+
         // 查找 --delete-old 参数
         std::wstring oldPath;
         bool foundDeleteArg = false;
-        
+
         for (int i = 1; i < argc - 1; i++) {
             if (wcscmp(argv[i], L"--delete-old") == 0) {
                 // 支持路径包含空格的情况：从 i+1 开始合并所有剩余参数
@@ -1237,11 +1241,11 @@ void HandleSelfCopyAndDelete()
                 break;
             }
         }
-        
+
         if (foundDeleteArg && !oldPath.empty())
         {
             std::wcout << L"Attempting to delete: " << oldPath << std::endl;
-            
+
             // 等待原程序退出
             std::wcout << L"Waiting 5 seconds for original process to exit..." << std::endl;
             Sleep(5000);
@@ -1251,7 +1255,7 @@ void HandleSelfCopyAndDelete()
             for (int i = 0; i < 10; ++i)
             {
                 std::wcout << L"Attempt " << (i + 1) << L": Checking if file exists..." << std::endl;
-                
+
                 if (!fs::exists(oldPath))
                 {
                     std::wcout << L"File already deleted or does not exist" << std::endl;
@@ -1271,7 +1275,7 @@ void HandleSelfCopyAndDelete()
 
                 lastError = GetLastError();
                 std::wcout << L"Delete failed, error: " << lastError << std::endl;
-                
+
                 if (lastError == ERROR_SHARING_VIOLATION || lastError == ERROR_ACCESS_DENIED)
                 {
                     std::wcout << L"File in use, waiting 1 second..." << std::endl;
@@ -1291,10 +1295,10 @@ void HandleSelfCopyAndDelete()
                 {
                     lastError = GetLastError();
                     std::wcerr << L"MoveFileEx failed, error: " << lastError << std::endl;
-                    
+
                     wchar_t msg[512];
-                    swprintf_s(msg, L"删除原程序失败。\n路径: %s\n错误码: %lu\n将在下次重启时尝试删除。", 
-                               oldPath.c_str(), lastError);
+                    swprintf_s(msg, L"删除原程序失败。\n路径: %s\n错误码: %lu\n将在下次重启时尝试删除。",
+                        oldPath.c_str(), lastError);
                     MessageBoxW(NULL, msg, L"删除警告", MB_ICONWARNING);
                 }
                 else
@@ -1346,7 +1350,7 @@ int main()
 #endif
 
     GetLogDirectory();
-    
+
     StartServerControl();
 
     std::string output_filename = MakeOutputFilename();
