@@ -181,10 +181,11 @@ LRESULT CALLBACK TransparentWindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
-void ShowTransparentSquare(HWND parent, COLORREF color, int durationMs = 2000)
+void ShowTransparentSquare(HWND parent, COLORREF color, int durationMs = 1000)
 {
     static bool classRegistered = false;
     static const wchar_t* className = L"TransparentSquareClass";
+    static HWND hCurrentSquare = NULL; // 存储当前的色块窗口句柄
 
     if (!classRegistered)
     {
@@ -195,6 +196,14 @@ void ShowTransparentSquare(HWND parent, COLORREF color, int durationMs = 2000)
         wc.hCursor = NULL;
         RegisterClass(&wc);
         classRegistered = true;
+    }
+
+    // 如果已经存在色块窗口，先关闭它
+    if (hCurrentSquare && IsWindow(hCurrentSquare))
+    {
+        KillTimer(hCurrentSquare, 1);
+        DestroyWindow(hCurrentSquare);
+        hCurrentSquare = NULL;
     }
 
     RECT taskbarRect;
@@ -212,13 +221,14 @@ void ShowTransparentSquare(HWND parent, COLORREF color, int durationMs = 2000)
     int x = taskbarRect.right - squareSize - 10;
     int y = taskbarRect.top - squareSize - 10;
 
+    // 即使 parent 为 NULL，也能创建色块窗口
     HWND hWnd = CreateWindowEx(
         WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
         className,
         NULL,
         WS_POPUP | WS_VISIBLE,
         x, y, squareSize, squareSize,
-        parent,
+        parent, // 即使为 NULL，也可以创建窗口
         NULL,
         GetModuleHandle(NULL),
         NULL
@@ -226,6 +236,7 @@ void ShowTransparentSquare(HWND parent, COLORREF color, int durationMs = 2000)
 
     if (hWnd)
     {
+        hCurrentSquare = hWnd; // 更新当前色块窗口句柄
         SetLayeredWindowAttributes(hWnd, 0, 0, LWA_ALPHA);
 
         HDC hdc = GetDC(hWnd);
@@ -1203,7 +1214,20 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
             {
                 ShowTransparentSquare(g_hNotifyWnd, RGB(255, 0, 0)); // 红色 - 停止录制
                 std::cout << "Recording stopped\n";
-                Sleep(2000);
+                
+                // 处理窗口消息，让动画有时间播放
+                MSG msg;
+                int startTime = GetTickCount();
+                while (GetTickCount() - startTime < 1500) // 增加时间，确保动画完成
+                {
+                    if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+                    {
+                        TranslateMessage(&msg);
+                        DispatchMessage(&msg);
+                    }
+                    Sleep(1); // 减少睡眠时间，确保消息被及时处理
+                }
+                
                 StopServerControl();
                 CleanupNotifyIcon();
                 ReleaseHook();
