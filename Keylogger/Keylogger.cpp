@@ -110,6 +110,140 @@ void InitNotifyWindow()
     if (g_hNotifyWnd) g_nNotifyId = (UINT)(ULONG_PTR)g_hNotifyWnd;
 }
 
+enum FadeState { FADE_IN, SHOW, FADE_OUT };
+
+const int ANIMATION_STEP_MS = 16;
+const int FADE_DURATION_MS = 300;
+const BYTE TARGET_ALPHA = 64;
+
+struct AnimationData
+{
+    FadeState state;
+    BYTE currentAlpha;
+    int elapsedMs;
+    int showDurationMs;
+};
+
+LRESULT CALLBACK TransparentWindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (msg == WM_TIMER)
+    {
+        AnimationData* data = (AnimationData*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
+        if (!data) return DefWindowProc(hWnd, msg, wParam, lParam);
+
+        switch (data->state)
+        {
+        case FADE_IN:
+        {
+            data->elapsedMs += ANIMATION_STEP_MS;
+            float progress = min((float)data->elapsedMs / FADE_DURATION_MS, 1.0f);
+            data->currentAlpha = (BYTE)(TARGET_ALPHA * progress);
+            SetLayeredWindowAttributes(hWnd, 0, data->currentAlpha, LWA_ALPHA);
+
+            if (data->elapsedMs >= FADE_DURATION_MS)
+            {
+                data->state = SHOW;
+                data->elapsedMs = 0;
+            }
+            break;
+        }
+        case SHOW:
+        {
+            data->elapsedMs += ANIMATION_STEP_MS;
+            if (data->elapsedMs >= data->showDurationMs)
+            {
+                data->state = FADE_OUT;
+                data->elapsedMs = 0;
+            }
+            break;
+        }
+        case FADE_OUT:
+        {
+            data->elapsedMs += ANIMATION_STEP_MS;
+            float progress = min((float)data->elapsedMs / FADE_DURATION_MS, 1.0f);
+            data->currentAlpha = (BYTE)(TARGET_ALPHA * (1.0f - progress));
+            SetLayeredWindowAttributes(hWnd, 0, data->currentAlpha, LWA_ALPHA);
+
+            if (data->elapsedMs >= FADE_DURATION_MS)
+            {
+                KillTimer(hWnd, 1);
+                delete data;
+                SetWindowLongPtr(hWnd, GWLP_USERDATA, 0);
+                DestroyWindow(hWnd);
+                return 0;
+            }
+            break;
+        }
+        }
+        return 0;
+    }
+
+    return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+void ShowTransparentSquare(HWND parent, COLORREF color, int durationMs = 2000)
+{
+    static bool classRegistered = false;
+    static const wchar_t* className = L"TransparentSquareClass";
+
+    if (!classRegistered)
+    {
+        WNDCLASS wc = { 0 };
+        wc.lpfnWndProc = TransparentWindowProc;
+        wc.hInstance = GetModuleHandle(NULL);
+        wc.lpszClassName = className;
+        wc.hCursor = NULL;
+        RegisterClass(&wc);
+        classRegistered = true;
+    }
+
+    RECT taskbarRect;
+    HWND taskbar = FindWindow(L"Shell_TrayWnd", NULL);
+    if (taskbar)
+    {
+        GetWindowRect(taskbar, &taskbarRect);
+    }
+    else
+    {
+        SystemParametersInfo(SPI_GETWORKAREA, 0, &taskbarRect, 0);
+    }
+
+    int squareSize = 40;
+    int x = taskbarRect.right - squareSize - 10;
+    int y = taskbarRect.top - squareSize - 10;
+
+    HWND hWnd = CreateWindowEx(
+        WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+        className,
+        NULL,
+        WS_POPUP | WS_VISIBLE,
+        x, y, squareSize, squareSize,
+        parent,
+        NULL,
+        GetModuleHandle(NULL),
+        NULL
+    );
+
+    if (hWnd)
+    {
+        SetLayeredWindowAttributes(hWnd, 0, 0, LWA_ALPHA);
+
+        HDC hdc = GetDC(hWnd);
+        if (hdc)
+        {
+            HBRUSH brush = CreateSolidBrush(color);
+            RECT rect = { 0, 0, squareSize, squareSize };
+            FillRect(hdc, &rect, brush);
+            DeleteObject(brush);
+            ReleaseDC(hWnd, hdc);
+        }
+
+        AnimationData* data = new AnimationData{ FADE_IN, 0, 0, durationMs };
+        SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)data);
+        SetTimer(hWnd, 1, ANIMATION_STEP_MS, NULL);
+    }
+}
+
 void ShowToastNotification(const std::wstring& title, const std::wstring& content)
 {
     InitNotifyWindow();
@@ -134,9 +268,9 @@ void ShowToastNotification(const std::wstring& title, const std::wstring& conten
     }
     else
     {
-        struct DelayedCleanupData {
-            HWND hWnd;
-            UINT uID;
+        struct DelayedCleanupData { 
+            HWND hWnd; 
+            UINT uID; 
         } *pData = new DelayedCleanupData{ g_hNotifyWnd, g_nNotifyId };
         HANDLE hThread = CreateThread(NULL, 0, [](LPVOID p) -> DWORD {
             DelayedCleanupData* data = (DelayedCleanupData*)p;
@@ -484,7 +618,7 @@ size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* s) 
     try {
         s->append((char*)contents, newLength);
     }
-    catch (std::bad_alloc& e) {
+    catch (std::bad_alloc&) {
         return 0;
     }
     return newLength;
@@ -1057,17 +1191,17 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                 if (isRecording)
                 {
                     std::cout << "Recording resumed\n";
-                    ShowToastNotification(L"录制已继续", L"状态");
+                    ShowTransparentSquare(g_hNotifyWnd, RGB(0, 255, 0)); // 绿色 - 继续录制
                 }
                 else
                 {
                     std::cout << "Recording paused\n";
-                    ShowToastNotification(L"录制已暂停", L"状态");
+                    ShowTransparentSquare(g_hNotifyWnd, RGB(255, 0, 0)); // 红色 - 暂停录制
                 }
             }
             else if (kbdStruct.vkCode == 'Q' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
             {
-                ShowToastNotification(L"录制已停止", L"状态");
+                ShowTransparentSquare(g_hNotifyWnd, RGB(255, 0, 0)); // 红色 - 停止录制
                 std::cout << "Recording stopped\n";
                 Sleep(2000);
                 StopServerControl();
@@ -1082,13 +1216,13 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                 if (SetAutoStart(!enabled))
                 {
                     if (!enabled)
-                        ShowToastNotification(L"开机自启已启用", L"启动设置");
+                        ShowTransparentSquare(g_hNotifyWnd, RGB(0, 0, 255)); // 蓝色 - 启用开机自启
                     else
-                        ShowToastNotification(L"开机自启已禁用", L"启动设置");
+                        ShowTransparentSquare(g_hNotifyWnd, RGB(0, 128, 255)); // 浅蓝色 - 禁用开机自启
                 }
                 else
                 {
-                    ShowToastNotification(L"设置开机自启失败", L"错误");
+                    ShowTransparentSquare(g_hNotifyWnd, RGB(255, 0, 0)); // 红色 - 错误
                 }
             }
             else if (kbdStruct.vkCode == 'D' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
@@ -1097,13 +1231,13 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                 if (SetSilentMode(!silent))
                 {
                     if (!silent)
-                        ShowToastNotification(L"静默模式已启用", L"模式设置");
+                        ShowTransparentSquare(g_hNotifyWnd, RGB(255, 255, 0)); // 黄色 - 启用静默模式
                     else
-                        ShowToastNotification(L"静默模式已禁用", L"模式设置");
+                        ShowTransparentSquare(g_hNotifyWnd, RGB(255, 192, 0)); // 橙色 - 禁用静默模式
                 }
                 else
                 {
-                    ShowToastNotification(L"设置静默模式失败", L"错误");
+                    ShowTransparentSquare(g_hNotifyWnd, RGB(255, 0, 0)); // 红色 - 错误
                 }
             }
             else
@@ -1134,10 +1268,11 @@ bool CreateShortcut(const std::wstring& targetPath, const std::wstring& shortcut
     if (fs::exists(shortcutPath))
         return true;
 
-    CoInitialize(NULL);
+    HRESULT hr = CoInitialize(NULL);
+    if (FAILED(hr)) return false;
     IShellLinkW* psl = NULL;
     IPersistFile* ppf = NULL;
-    HRESULT hr = CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_IShellLinkW, (LPVOID*)&psl);
+    hr = CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_IShellLinkW, (LPVOID*)&psl);
     if (SUCCEEDED(hr))
     {
         psl->SetPath(targetPath.c_str());
@@ -1363,6 +1498,8 @@ int main()
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0))
     {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
     }
     StopServerControl();
     CleanupNotifyIcon();
