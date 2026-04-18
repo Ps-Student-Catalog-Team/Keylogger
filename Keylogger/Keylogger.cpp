@@ -1,6 +1,7 @@
 ﻿#include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <dwmapi.h>
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -28,6 +29,7 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "uuid.lib")
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "dwmapi.lib")
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -307,6 +309,377 @@ void CleanupNotifyIcon()
         Shell_NotifyIconW(NIM_DELETE, &nid);
         DestroyWindow(g_hNotifyWnd);
         g_hNotifyWnd = NULL;
+    }
+}
+
+// 欢迎窗口相关代码
+HWND g_hWelcomeWnd = NULL;
+POINT g_mousePos = { -1, -1 };
+bool g_isButtonPressed = false;
+
+// 现代颜色方案
+#define COLOR_BACKGROUND RGB(255, 255, 255)
+#define COLOR_PRIMARY RGB(255, 255, 255)
+#define COLOR_PRIMARY_DARK RGB(240, 240, 240)
+#define COLOR_TEXT RGB(31, 41, 55)
+#define COLOR_TEXT_LIGHT RGB(75, 85, 99)
+#define COLOR_ACCENT RGB(16, 185, 129)
+#define COLOR_BORDER RGB(229, 231, 235)
+#define COLOR_BUTTON_HOVER RGB(209, 213, 219)
+#define COLOR_BUTTON_PRESSED RGB(191, 219, 254)
+
+LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg)
+    {
+    case WM_CREATE:
+    {
+        // 确保窗口大小固定，移除可调整大小的样式
+        DWORD style = GetWindowLong(hWnd, GWL_STYLE);
+        style &= ~(WS_THICKFRAME | WS_SIZEBOX);
+        SetWindowLong(hWnd, GWL_STYLE, style);
+        
+        // 设置窗口为分层窗口以支持半透明效果和阴影
+        SetWindowLong(hWnd, GWL_EXSTYLE, GetWindowLong(hWnd, GWL_EXSTYLE) | WS_EX_LAYERED);
+        
+        // 初始化鼠标位置
+        g_mousePos = { -1, -1 };
+        g_isButtonPressed = false;
+        
+        // 启用窗口阴影
+        BOOL bEnable = TRUE;
+        DwmSetWindowAttribute(hWnd, DWMWA_NCRENDERING_POLICY, &bEnable, sizeof(bEnable));
+        
+        // 设置窗口边框颜色（可选）
+        COLORREF clrBorder = RGB(229, 231, 235);
+        DwmSetWindowAttribute(hWnd, DWMWA_BORDER_COLOR, &clrBorder, sizeof(clrBorder));
+        
+        // 创建窗口阴影
+        DWMNCRENDERINGPOLICY ncrp = DWMNCRP_ENABLED;
+        DwmSetWindowAttribute(hWnd, DWMWA_NCRENDERING_POLICY, &ncrp, sizeof(ncrp));
+        
+        // 为窗口添加阴影效果
+        MARGINS margins = { 1, 1, 1, 1 };
+        DwmExtendFrameIntoClientArea(hWnd, &margins);
+        
+        return 0;
+    }
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hWnd, &ps);
+        
+        // 绘制背景（带圆角）
+        RECT rect;
+        GetClientRect(hWnd, &rect);
+        HBRUSH bgBrush = CreateSolidBrush(RGB(255, 255, 255));
+        
+        // 创建圆角路径
+        HRGN hRgn = CreateRoundRectRgn(0, 0, rect.right, rect.bottom, 15, 15);
+        SelectClipRgn(hdc, hRgn);
+        FillRect(hdc, &rect, bgBrush);
+        DeleteObject(hRgn);
+        DeleteObject(bgBrush);
+        
+        // 绘制标题栏
+        RECT headerRect = { 0, 0, rect.right, 60 };
+        HBRUSH titleBrush = CreateSolidBrush(RGB(255, 255, 255));
+        FillRect(hdc, &headerRect, titleBrush);
+        DeleteObject(titleBrush);
+        
+        // 绘制标题栏边框
+        HPEN borderPen = CreatePen(PS_SOLID, 1, RGB(229, 231, 235));
+        HPEN oldPen = (HPEN)SelectObject(hdc, borderPen);
+        MoveToEx(hdc, 0, 60, NULL);
+        LineTo(hdc, rect.right, 60);
+        SelectObject(hdc, oldPen);
+        DeleteObject(borderPen);
+        
+        // 绘制标题文本
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, RGB(31, 41, 55));
+        HFONT titleFont = CreateFont(24, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        HFONT oldFont = (HFONT)SelectObject(hdc, titleFont);
+        DrawTextW(hdc, L"Keylogger", -1, &headerRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(hdc, oldFont);
+        DeleteObject(titleFont);
+        
+        // 绘制内容区域
+        RECT contentRect = { 30, 90, rect.right - 30, rect.bottom - 90 };
+        SetTextColor(hdc, RGB(31, 41, 55));
+        
+        // 显示当前状态和快捷键说明
+        std::wstring statusText = isRecording ? L"录制中" : L"已暂停";
+        
+        // 绘制状态信息
+        SetTextColor(hdc, RGB(31, 41, 55));
+        HFONT statusFont = CreateFont(20, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        SelectObject(hdc, statusFont);
+        std::wstring statusLine = L"当前状态: " + statusText;
+        RECT statusRect = { contentRect.left, contentRect.top, contentRect.right, contentRect.top + 40 };
+        DrawTextW(hdc, statusLine.c_str(), -1, &statusRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        DeleteObject(statusFont);
+        
+        // 绘制快捷键说明（增大字体）
+        HFONT shortcutFont = CreateFont(18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        SelectObject(hdc, shortcutFont);
+        
+        // 绘制快捷键说明标题
+        RECT shortcutRect = { contentRect.left, contentRect.top + 50, contentRect.right, contentRect.bottom };
+        SetTextColor(hdc, RGB(31, 41, 55));
+        RECT titleRect = shortcutRect;
+        titleRect.bottom = titleRect.top + 30;
+        DrawTextW(hdc, L"快捷键说明:", -1, &titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        
+        // 绘制快捷键列表
+        int lineHeight = 30;
+        int currentY = titleRect.bottom + 5;
+        
+        // 快捷键1
+        RECT keyRect = { shortcutRect.left, currentY, shortcutRect.left + 200, currentY + lineHeight };
+        SetTextColor(hdc, RGB(59, 130, 246)); // 蓝色
+        DrawTextW(hdc, L"Ctrl + Shift + Alt + P", -1, &keyRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        
+        RECT funcRect = { shortcutRect.left + 200, currentY, shortcutRect.right, currentY + lineHeight };
+        SetTextColor(hdc, RGB(31, 41, 55));
+        DrawTextW(hdc, L"暂停/继续录制", -1, &funcRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        currentY += lineHeight;
+        
+        // 快捷键2
+        keyRect.top = currentY;
+        keyRect.bottom = currentY + lineHeight;
+        SetTextColor(hdc, RGB(59, 130, 246)); // 蓝色
+        DrawTextW(hdc, L"Ctrl + Shift + Alt + Q", -1, &keyRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        
+        funcRect.top = currentY;
+        funcRect.bottom = currentY + lineHeight;
+        SetTextColor(hdc, RGB(31, 41, 55));
+        DrawTextW(hdc, L"停止录制", -1, &funcRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        currentY += lineHeight;
+        
+        // 快捷键3
+        keyRect.top = currentY;
+        keyRect.bottom = currentY + lineHeight;
+        SetTextColor(hdc, RGB(59, 130, 246)); // 蓝色
+        DrawTextW(hdc, L"Ctrl + Shift + Alt + S", -1, &keyRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        
+        funcRect.top = currentY;
+        funcRect.bottom = currentY + lineHeight;
+        SetTextColor(hdc, RGB(31, 41, 55));
+        DrawTextW(hdc, L"启用/禁用开机自启", -1, &funcRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        currentY += lineHeight;
+        
+        // 快捷键4
+        keyRect.top = currentY;
+        keyRect.bottom = currentY + lineHeight;
+        SetTextColor(hdc, RGB(59, 130, 246)); // 蓝色
+        DrawTextW(hdc, L"Ctrl + Shift + Alt + D", -1, &keyRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        
+        funcRect.top = currentY;
+        funcRect.bottom = currentY + lineHeight;
+        SetTextColor(hdc, RGB(31, 41, 55));
+        DrawTextW(hdc, L"启用/禁用静默模式", -1, &funcRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        currentY += lineHeight + 10;
+        
+        // 绘制日志保存位置
+        RECT logRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
+        SetTextColor(hdc, RGB(16, 185, 129)); // 绿色
+        DrawTextW(hdc, L"日志保存在 %appdata%\\Keylogger", -1, &logRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        currentY += lineHeight;
+        
+        // 绘制服务器控制端口
+        RECT portRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
+        SetTextColor(hdc, RGB(16, 185, 129)); // 绿色
+        std::wstring portText = L"服务器控制端口: " + std::to_wstring(g_localPort);
+        DrawTextW(hdc, portText.c_str(), -1, &portRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        
+        SelectObject(hdc, oldFont);
+        DeleteObject(shortcutFont);
+        
+        // 绘制关闭按钮
+        RECT buttonRect = { rect.right - 150, rect.bottom - 60, rect.right - 30, rect.bottom - 20 };
+        
+        // 检查鼠标是否在按钮上
+        POINT pt = g_mousePos;
+        bool isHover = false;
+        if (pt.x != -1 && pt.y != -1)
+        {
+            isHover = PtInRect(&buttonRect, pt);
+        }
+        
+        // 绘制按钮背景
+        HBRUSH buttonBrush;
+        if (g_isButtonPressed)
+        {
+            buttonBrush = CreateSolidBrush(RGB(191, 219, 254)); // 浅蓝色
+        }
+        else if (isHover)
+        {
+            buttonBrush = CreateSolidBrush(RGB(209, 213, 219)); // 浅灰色
+        }
+        else
+        {
+            buttonBrush = CreateSolidBrush(RGB(229, 231, 235)); // 更浅的灰色
+        }
+        FillRect(hdc, &buttonRect, buttonBrush);
+        DeleteObject(buttonBrush);
+        
+        // 绘制按钮边框
+        HPEN buttonPen = CreatePen(PS_SOLID, 1, RGB(229, 231, 235));
+        SelectObject(hdc, buttonPen);
+        Rectangle(hdc, buttonRect.left, buttonRect.top, buttonRect.right, buttonRect.bottom);
+        SelectObject(hdc, oldPen);
+        DeleteObject(buttonPen);
+        
+        // 绘制按钮文本
+        SetTextColor(hdc, RGB(31, 41, 55));
+        HFONT buttonFont = CreateFont(16, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        SelectObject(hdc, buttonFont);
+        DrawTextW(hdc, L"确定", -1, &buttonRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(hdc, oldFont);
+        DeleteObject(buttonFont);
+        
+        EndPaint(hWnd, &ps);
+        return 0;
+    }
+    case WM_MOUSEMOVE:
+    {
+        POINT pt;
+        GetCursorPos(&pt);
+        ScreenToClient(hWnd, &pt);
+        
+        // 检查鼠标是否在按钮上
+        RECT rect;
+        GetClientRect(hWnd, &rect);
+        RECT buttonRect = { rect.right - 150, rect.bottom - 60, rect.right - 30, rect.bottom - 20 };
+        
+        bool isHover = PtInRect(&buttonRect, pt);
+        POINT oldPos = g_mousePos;
+        g_mousePos = pt;
+        
+        // 如果按钮未被按下，并且鼠标进入或离开按钮区域，重绘窗口
+        if (!g_isButtonPressed && ((oldPos.x == -1 && oldPos.y == -1) || 
+            (!PtInRect(&buttonRect, oldPos) && isHover) || 
+            (PtInRect(&buttonRect, oldPos) && !isHover)))
+        {
+            InvalidateRect(hWnd, &buttonRect, FALSE);
+        }
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+    {
+        // 只有当按钮未被按下时，才重置鼠标位置和重绘按钮
+        if (!g_isButtonPressed)
+        {
+            g_mousePos = { -1, -1 };
+            RECT rect;
+            GetClientRect(hWnd, &rect);
+            RECT buttonRect = { rect.right - 150, rect.bottom - 60, rect.right - 30, rect.bottom - 20 };
+            InvalidateRect(hWnd, &buttonRect, FALSE);
+        }
+        return 0;
+    }
+    case WM_LBUTTONDOWN:
+    {
+        POINT pt;
+        GetCursorPos(&pt);
+        ScreenToClient(hWnd, &pt);
+        
+        RECT rect;
+        GetClientRect(hWnd, &rect);
+        RECT buttonRect = { rect.right - 150, rect.bottom - 60, rect.right - 30, rect.bottom - 20 };
+        
+        if (PtInRect(&buttonRect, pt))
+        {
+            // 设置按钮为按下状态
+            g_isButtonPressed = true;
+            InvalidateRect(hWnd, &buttonRect, FALSE);
+        }
+        return 0;
+    }
+    case WM_LBUTTONUP:
+    {
+        POINT pt;
+        GetCursorPos(&pt);
+        ScreenToClient(hWnd, &pt);
+        
+        RECT rect;
+        GetClientRect(hWnd, &rect);
+        RECT buttonRect = { rect.right - 150, rect.bottom - 60, rect.right - 30, rect.bottom - 20 };
+        
+        // 恢复按钮状态
+        if (g_isButtonPressed)
+        {
+            g_isButtonPressed = false;
+            InvalidateRect(hWnd, &buttonRect, FALSE);
+            
+            // 如果鼠标在按钮上，执行按钮点击操作
+            if (PtInRect(&buttonRect, pt))
+            {
+                DestroyWindow(hWnd);
+                g_hWelcomeWnd = NULL;
+            }
+        }
+        return 0;
+    }
+    case WM_DESTROY:
+        g_hWelcomeWnd = NULL;
+        g_mousePos = { -1, -1 };
+        g_isButtonPressed = false;
+        return 0;
+    default:
+        return DefWindowProc(hWnd, msg, wParam, lParam);
+    }
+}
+
+void ShowWelcomeWindow()
+{
+    static bool classRegistered = false;
+    static const wchar_t* className = L"KeyloggerWelcomeClass";
+    
+    if (!classRegistered)
+    {
+        WNDCLASS wc = { 0 };
+        wc.lpfnWndProc = WelcomeWndProc;
+        wc.hInstance = GetModuleHandle(NULL);
+        wc.lpszClassName = className;
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        wc.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
+        RegisterClass(&wc);
+        classRegistered = true;
+    }
+    
+    if (g_hWelcomeWnd && IsWindow(g_hWelcomeWnd))
+    {
+        SetForegroundWindow(g_hWelcomeWnd);
+        return;
+    }
+    
+    int width = 550;
+    int height = 450;
+    int x = (GetSystemMetrics(SM_CXSCREEN) - width) / 2;
+    int y = (GetSystemMetrics(SM_CYSCREEN) - height) / 2;
+    
+    // 创建窗口时添加 WS_EX_LAYERED 样式以支持阴影效果
+    g_hWelcomeWnd = CreateWindowEx(
+        WS_EX_WINDOWEDGE | WS_EX_LAYERED,
+        className,
+        L"Keylogger",
+        WS_POPUP | WS_VISIBLE,
+        x, y, width, height,
+        NULL,
+        NULL,
+        GetModuleHandle(NULL),
+        NULL
+    );
+    
+    if (g_hWelcomeWnd)
+    {
+        // 设置窗口的透明度为 255（完全不透明）
+        SetLayeredWindowAttributes(g_hWelcomeWnd, 0, 255, LWA_ALPHA);
+        
+        ShowWindow(g_hWelcomeWnd, SW_SHOW);
+        UpdateWindow(g_hWelcomeWnd);
     }
 }
 
@@ -1484,17 +1857,7 @@ int main()
     isRecording = GetSavedRecordingState();
 
     if (!IsSilentMode()) {
-        wchar_t msg[512];
-        swprintf_s(msg, L"Keylogger 已启动\n\n当前状态: %s\n\n快捷键说明:\n"
-            L"Ctrl + Shift + Alt + P  暂停/继续录制\n"
-            L"Ctrl + Shift + Alt + Q  停止录制\n"
-            L"Ctrl + Shift + Alt + S  启用/禁用开机自启\n"
-            L"Ctrl + Shift + Alt + D  启用/禁用静默模式\n\n"
-            L"日志保存在 %%appdata%%\\Keylogger\n"
-            L"服务器控制端口: %d",
-            isRecording ? L"录制中" : L"已暂停",
-            g_localPort);
-        MessageBoxW(NULL, msg, L"Keylogger", MB_OK);
+        ShowWelcomeWindow();
     }
 
 #ifdef bootwait 
