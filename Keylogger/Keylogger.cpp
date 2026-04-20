@@ -316,6 +316,8 @@ void CleanupNotifyIcon()
 HWND g_hWelcomeWnd = NULL;
 POINT g_mousePos = { -1, -1 };
 bool g_isButtonPressed = false;
+bool g_isDragging = false;
+POINT g_dragStartPos;
 
 // 现代颜色方案
 #define COLOR_BACKGROUND RGB(255, 255, 255)
@@ -345,6 +347,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         // 初始化鼠标位置
         g_mousePos = { -1, -1 };
         g_isButtonPressed = false;
+        g_isDragging = false;
         
         // 启用窗口阴影
         BOOL bEnable = TRUE;
@@ -557,8 +560,24 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         POINT oldPos = g_mousePos;
         g_mousePos = pt;
         
+        // 处理窗口移动
+        if (g_isDragging)
+        {
+            POINT currentPos;
+            GetCursorPos(&currentPos);
+            
+            RECT windowRect;
+            GetWindowRect(hWnd, &windowRect);
+            
+            int dx = currentPos.x - g_dragStartPos.x;
+            int dy = currentPos.y - g_dragStartPos.y;
+            
+            SetWindowPos(hWnd, NULL, windowRect.left + dx, windowRect.top + dy, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+            
+            g_dragStartPos = currentPos;
+        }
         // 如果按钮未被按下，并且鼠标进入或离开按钮区域，重绘窗口
-        if (!g_isButtonPressed && ((oldPos.x == -1 && oldPos.y == -1) || 
+        else if (!g_isButtonPressed && ((oldPos.x == -1 && oldPos.y == -1) || 
             (!PtInRect(&buttonRect, oldPos) && isHover) || 
             (PtInRect(&buttonRect, oldPos) && !isHover)))
         {
@@ -589,7 +608,16 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         GetClientRect(hWnd, &rect);
         RECT buttonRect = { rect.right - 150, rect.bottom - 60, rect.right - 30, rect.bottom - 20 };
         
-        if (PtInRect(&buttonRect, pt))
+        // 检查是否点击了标题栏区域
+        RECT titleBarRect = { 0, 0, rect.right, 60 };
+        if (PtInRect(&titleBarRect, pt) && !PtInRect(&buttonRect, pt))
+        {
+            // 开始拖动窗口
+            g_isDragging = true;
+            GetCursorPos(&g_dragStartPos);
+            SetCapture(hWnd);
+        }
+        else if (PtInRect(&buttonRect, pt))
         {
             // 设置按钮为按下状态
             g_isButtonPressed = true;
@@ -607,8 +635,14 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         GetClientRect(hWnd, &rect);
         RECT buttonRect = { rect.right - 150, rect.bottom - 60, rect.right - 30, rect.bottom - 20 };
         
+        // 结束拖动
+        if (g_isDragging)
+        {
+            g_isDragging = false;
+            ReleaseCapture();
+        }
         // 恢复按钮状态
-        if (g_isButtonPressed)
+        else if (g_isButtonPressed)
         {
             g_isButtonPressed = false;
             InvalidateRect(hWnd, &buttonRect, FALSE);
@@ -626,6 +660,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_hWelcomeWnd = NULL;
         g_mousePos = { -1, -1 };
         g_isButtonPressed = false;
+        g_isDragging = false;
         return 0;
     default:
         return DefWindowProc(hWnd, msg, wParam, lParam);
