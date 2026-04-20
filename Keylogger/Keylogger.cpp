@@ -2,6 +2,7 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <dwmapi.h>
+#include <gdiplus.h>
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -30,6 +31,9 @@
 #pragma comment(lib, "uuid.lib")
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "gdiplus.lib")
+
+using namespace Gdiplus;
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -416,7 +420,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         
         // 绘制状态信息
         SetTextColor(hdc, RGB(31, 41, 55));
-        HFONT statusFont = CreateFont(18, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        HFONT statusFont = CreateFont(18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
         SelectObject(hdc, statusFont);
         std::wstring statusLine = L"当前状态: " + statusText;
         RECT statusRect = { contentRect.left, contentRect.top, contentRect.right, contentRect.top + 35 };
@@ -499,7 +503,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         
         // 绘制色块显示功能说明
         RECT colorRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
-        SetTextColor(hdc, RGB(31, 41, 55));
+        SetTextColor(hdc, RGB(107, 114, 128)); // 淡灰色
         DrawTextW(hdc, L"色块显示功能:", -1, &colorRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         currentY += lineHeight;
         
@@ -509,7 +513,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         
         // 绿色 - 继续录制
         RECT greenRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
-        SetTextColor(hdc, RGB(31, 41, 55));
+        SetTextColor(hdc, RGB(107, 114, 128)); // 淡灰色
         RECT greenBoxRect = { greenRect.left, greenRect.top + (lineHeight - colorBoxSize) / 2, greenRect.left + colorBoxSize, greenRect.top + (lineHeight - colorBoxSize) / 2 + colorBoxSize };
         HBRUSH greenBrush = CreateSolidBrush(RGB(0, 255, 0));
         FillRect(hdc, &greenBoxRect, greenBrush);
@@ -520,7 +524,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         
         // 红色 - 暂停/停止录制或错误
         RECT redRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
-        SetTextColor(hdc, RGB(31, 41, 55));
+        SetTextColor(hdc, RGB(107, 114, 128)); // 淡灰色
         RECT redBoxRect = { redRect.left, redRect.top + (lineHeight - colorBoxSize) / 2, redRect.left + colorBoxSize, redRect.top + (lineHeight - colorBoxSize) / 2 + colorBoxSize };
         HBRUSH redBrush = CreateSolidBrush(RGB(255, 0, 0));
         FillRect(hdc, &redBoxRect, redBrush);
@@ -531,7 +535,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         
         // 蓝色 - 启用开机自启
         RECT blueRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
-        SetTextColor(hdc, RGB(31, 41, 55));
+        SetTextColor(hdc, RGB(107, 114, 128)); // 淡灰色
         RECT blueBoxRect = { blueRect.left, blueRect.top + (lineHeight - colorBoxSize) / 2, blueRect.left + colorBoxSize, blueRect.top + (lineHeight - colorBoxSize) / 2 + colorBoxSize };
         HBRUSH blueBrush = CreateSolidBrush(RGB(0, 0, 255));
         FillRect(hdc, &blueBoxRect, blueBrush);
@@ -542,7 +546,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         
         // 浅蓝色 - 禁用开机自启
         RECT lightBlueRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
-        SetTextColor(hdc, RGB(31, 41, 55));
+        SetTextColor(hdc, RGB(107, 114, 128)); // 淡灰色
         RECT lightBlueBoxRect = { lightBlueRect.left, lightBlueRect.top + (lineHeight - colorBoxSize) / 2, lightBlueRect.left + colorBoxSize, lightBlueRect.top + (lineHeight - colorBoxSize) / 2 + colorBoxSize };
         HBRUSH lightBlueBrush = CreateSolidBrush(RGB(0, 128, 255));
         FillRect(hdc, &lightBlueBoxRect, lightBlueBrush);
@@ -553,7 +557,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         
         // 黄色 - 启用静默模式
         RECT yellowRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
-        SetTextColor(hdc, RGB(31, 41, 55));
+        SetTextColor(hdc, RGB(107, 114, 128)); // 淡灰色
         RECT yellowBoxRect = { yellowRect.left, yellowRect.top + (lineHeight - colorBoxSize) / 2, yellowRect.left + colorBoxSize, yellowRect.top + (lineHeight - colorBoxSize) / 2 + colorBoxSize };
         HBRUSH yellowBrush = CreateSolidBrush(RGB(255, 255, 0));
         FillRect(hdc, &yellowBoxRect, yellowBrush);
@@ -564,7 +568,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         
         // 橙色 - 禁用静默模式
         RECT orangeRect = { shortcutRect.left, currentY, shortcutRect.right, currentY + lineHeight };
-        SetTextColor(hdc, RGB(31, 41, 55));
+        SetTextColor(hdc, RGB(107, 114, 128)); // 淡灰色
         RECT orangeBoxRect = { orangeRect.left, orangeRect.top + (lineHeight - colorBoxSize) / 2, orangeRect.left + colorBoxSize, orangeRect.top + (lineHeight - colorBoxSize) / 2 + colorBoxSize };
         HBRUSH orangeBrush = CreateSolidBrush(RGB(255, 192, 0));
         FillRect(hdc, &orangeBoxRect, orangeBrush);
@@ -576,7 +580,7 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         DeleteObject(shortcutFont);
         
         // 绘制确定按钮
-        RECT buttonRect = { rect.right - 120, rect.bottom - 45, rect.right - 20, rect.bottom - 15 };
+        RECT buttonRect = { rect.right - 120, rect.bottom - 45, rect.right - 25, rect.bottom - 20 };
         
         // 检查鼠标是否在按钮上
         POINT pt = g_mousePos;
@@ -586,54 +590,82 @@ LRESULT CALLBACK WelcomeWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             isHover = PtInRect(&buttonRect, pt);
         }
         
-        // 绘制按钮背景（带圆角）
-        HBRUSH buttonBrush;
+        // 绘制确定按钮（使用GDI+抗锯齿）
+        Gdiplus::Graphics graphics(hdc);
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
+        
+        // 定义按钮颜色
+        Gdiplus::Color bgColor, borderColor;
         if (g_isButtonPressed)
         {
-            buttonBrush = CreateSolidBrush(RGB(209, 213, 219)); // 中灰色
+            bgColor = Gdiplus::Color(255, 209, 213, 219); // 中灰色
+            borderColor = Gdiplus::Color(255, 191, 219, 254); // 浅蓝色边框
         }
         else if (isHover)
         {
-            buttonBrush = CreateSolidBrush(RGB(231, 241, 255)); // 浅蓝色背景
+            bgColor = Gdiplus::Color(255, 231, 241, 255); // 浅蓝色背景
+            borderColor = Gdiplus::Color(255, 59, 130, 246); // 蓝色边框
         }
         else
         {
-            buttonBrush = CreateSolidBrush(RGB(255, 255, 255)); // 白色背景
+            bgColor = Gdiplus::Color(255, 255, 255, 255); // 白色背景
+            borderColor = Gdiplus::Color(255, 229, 231, 235); // 浅灰色边框
         }
         
-        // 创建圆角路径
-        HRGN buttonRgn = CreateRoundRectRgn(buttonRect.left, buttonRect.top, buttonRect.right, buttonRect.bottom, 10, 10);
-        SelectClipRgn(hdc, buttonRgn);
-        FillRect(hdc, &buttonRect, buttonBrush);
-        DeleteObject(buttonRgn);
-        DeleteObject(buttonBrush);
+        // 绘制按钮背景（带圆角）
+        int radius = 10;
+        Gdiplus::RectF rectF((float)buttonRect.left, (float)buttonRect.top, 
+                            (float)(buttonRect.right - buttonRect.left), 
+                            (float)(buttonRect.bottom - buttonRect.top));
+        Gdiplus::GraphicsPath path;
+        
+        // 手动创建圆角矩形路径
+        float width = rectF.Width;
+        float height = rectF.Height;
+        float x = rectF.X;
+        float y = rectF.Y;
+        
+        path.StartFigure();
+        path.AddArc(static_cast<REAL>(x), static_cast<REAL>(y), 
+                   static_cast<REAL>(radius * 2), static_cast<REAL>(radius * 2), 
+                   180.0f, 90.0f);
+        path.AddLine(static_cast<REAL>(x + radius), static_cast<REAL>(y), 
+                     static_cast<REAL>(x + width - radius), static_cast<REAL>(y));
+        path.AddArc(static_cast<REAL>(x + width - radius * 2), static_cast<REAL>(y), 
+                   static_cast<REAL>(radius * 2), static_cast<REAL>(radius * 2), 
+                   270.0f, 90.0f);
+        path.AddLine(static_cast<REAL>(x + width), static_cast<REAL>(y + radius), 
+                     static_cast<REAL>(x + width), static_cast<REAL>(y + height - radius));
+        path.AddArc(static_cast<REAL>(x + width - radius * 2), static_cast<REAL>(y + height - radius * 2), 
+                   static_cast<REAL>(radius * 2), static_cast<REAL>(radius * 2), 
+                   0.0f, 90.0f);
+        path.AddLine(static_cast<REAL>(x + width - radius), static_cast<REAL>(y + height), 
+                     static_cast<REAL>(x + radius), static_cast<REAL>(y + height));
+        path.AddArc(static_cast<REAL>(x), static_cast<REAL>(y + height - radius * 2), 
+                   static_cast<REAL>(radius * 2), static_cast<REAL>(radius * 2), 
+                   90.0f, 90.0f);
+        path.AddLine(static_cast<REAL>(x), static_cast<REAL>(y + height - radius), 
+                     static_cast<REAL>(x), static_cast<REAL>(y + radius));
+        path.CloseFigure();
+        
+        Gdiplus::SolidBrush brush(bgColor);
+        graphics.FillPath(&brush, &path);
         
         // 绘制按钮边框（带圆角）
-        HPEN buttonPen;
-        if (g_isButtonPressed)
-        {
-            buttonPen = CreatePen(PS_SOLID, 2, RGB(191, 219, 254)); // 浅蓝色边框
-        }
-        else if (isHover)
-        {
-            buttonPen = CreatePen(PS_SOLID, 2, RGB(59, 130, 246)); // 蓝色边框
-        }
-        else
-        {
-            buttonPen = CreatePen(PS_SOLID, 1, RGB(229, 231, 235)); // 浅灰色边框
-        }
-        SelectObject(hdc, buttonPen);
-        RoundRect(hdc, buttonRect.left, buttonRect.top, buttonRect.right, buttonRect.bottom, 10, 10);
-        SelectObject(hdc, oldPen);
-        DeleteObject(buttonPen);
+        Gdiplus::Pen pen(borderColor, g_isButtonPressed || isHover ? 2.0f : 1.0f);
+        graphics.DrawPath(&pen, &path);
         
         // 绘制按钮文本
-        SetTextColor(hdc, RGB(31, 41, 55)); // 深色文本
-        HFONT buttonFont = CreateFont(18, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-        SelectObject(hdc, buttonFont);
-        DrawTextW(hdc, L"确定", -1, &buttonRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        SelectObject(hdc, oldFont);
-        DeleteObject(buttonFont);
+        Gdiplus::FontFamily fontFamily(L"Segoe UI");
+        Gdiplus::Font font(&fontFamily, 14.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+        Gdiplus::SolidBrush textBrush(Gdiplus::Color(255, 31, 41, 55)); // 深色文本
+        
+        Gdiplus::StringFormat stringFormat;
+        stringFormat.SetAlignment(Gdiplus::StringAlignmentCenter);
+        stringFormat.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+        
+        graphics.DrawString(L"确定", -1, &font, rectF, &stringFormat, &textBrush);
         
         EndPaint(hWnd, &ps);
         return 0;
@@ -1969,6 +2001,11 @@ void HandleSelfCopyAndDelete()
 
 int main()
 {
+    // 初始化GDI+
+    GdiplusStartupInput gdiplusStartupInput;
+    ULONG_PTR gdiplusToken;
+    GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
+
     HandleSelfCopyAndDelete();
 
     Stealth();
@@ -2012,5 +2049,8 @@ int main()
     CleanupNotifyIcon();
     ReleaseHook();
     output_file.close();
+    
+    // 清理GDI+
+    GdiplusShutdown(gdiplusToken);
     return 0;
 }
